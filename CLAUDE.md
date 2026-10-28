@@ -12,10 +12,11 @@ Repositório template que gera, todo dia útil, um JSON com cotações de açõe
 [GitHub Actions, dias úteis 18h30 BRT]
    collect.py -> brapi (cotações) + Banco Central SGS (Selic, IPCA, dólar)
         └-> data/AAAA-MM-DD.json  (commitado no próprio repo)
-   notify.py -> resumo do JSON mais recente no Telegram (bot privado)
+   notify.py -> card.py (PNG com os números) + texto -> Telegram (bot privado)
 
 [Agente de narrativa, ~19h, fora deste repo]
    lê o JSON do dia + pesquisa notícias -> escreve a edição
+   -> JSON de notícias para `notify.py --noticias` (quem dispara o envio com notícias: decidir na etapa 5/6)
 ```
 
 Princípio: **API mede, notícia explica.** Este repo cuida só da medição. Todo número da newsletter vem do JSON.
@@ -26,9 +27,12 @@ Princípio: **API mede, notícia explica.** Este repo cuida só da medição. To
 .github/workflows/coleta.yml   agendamento no GitHub Actions
 data/                          um JSON por dia útil
 collect.py                     script coletor
-notify.py                      envia o resumo ao Telegram (--previa só mostra)
+card.py                        gera out/card-AAAA-MM-DD.png (Jinja2 + Playwright)
+templates/card.html            template do card
+notify.py                      envia card + texto ao Telegram (--previa só gera e mostra)
+out/                           cards gerados (fora do Git)
 tickers.txt                    um ticker por linha; linhas com # são comentário
-requirements.txt               requests, python-dotenv
+requirements.txt               requests, python-dotenv, jinja2, playwright
 .env                           BRAPI_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (local, fora do Git)
 ```
 
@@ -63,6 +67,20 @@ Base: `https://brapi.dev/api/v2/stocks`. Autenticação: header `Authorization: 
 
 Instável: respostas de ~15 s e 502 intermitente; o coletor tenta 3 vezes por série. A série 432 pode vir com data futura (vigência até a próxima reunião do Copom).
 
+## Telegram (formato híbrido)
+
+Duas mensagens por edição, nesta ordem:
+
+1. **`sendPhoto` com o card** (`card.py`): só números do JSON. Ibovespa, dólar PTAX, Selic, IPCA e tabela dos ativos (fechamento, dia, semana, mês) ordenada pela variação do dia. Aviso no topo se `status` for `parcial` ou `sem_pregao`. Rodapé: "Dados: brapi e Banco Central | coletado em X | informativo, não é recomendação".
+   - Visual de terminal financeiro: fundo escuro, números em fonte mono tabular alinhados à direita, verde (`#2cb5a0`) e vermelho (`#f0605d`) **só nas variações**, sempre com sinal +/−. O par foi validado para daltonismo e contraste. Sem gradientes.
+   - Playwright/Chromium, viewport de 1080 px, `device_scale_factor=2`, screenshot só do `#card`. Sem recursos externos no template.
+2. **`sendMessage` com o texto** (HTML, sem preview de link): destaques automáticos do JSON (Ibovespa, maior e menor variação, avisos) + destaques e notícias de `--noticias arquivo.json`:
+   `{"destaques": ["..."], "noticias": [{"titulo": "...", "url": "https://...", "fonte": "..."}]}`. Todo texto passa por `html.escape`; só links `http(s)`.
+
+Se o card falhar, o texto é enviado mesmo assim e o script sai com código 1. Credenciais só via `.env` ou Secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Para obter o chat_id: mandar mensagem ao bot e abrir `getUpdates`.
+
+No Actions, instalar o navegador com `python -m playwright install --with-deps chromium`.
+
 ## Contrato do JSON de saída
 
 O agente de narrativa depende deste formato. Mudanças aqui precisam ser intencionais.
@@ -94,7 +112,7 @@ Variações de semana e mês usam os fechamentos **anteriores a hoje** no histó
 
 ## Convenções
 
-- Python 3.12. Dependências só `requests` e `python-dotenv`.
+- Python 3.12. Dependências só `requests`, `python-dotenv`, `jinja2` e `playwright` (estas duas só para o card).
 - Funções pequenas, nomes e comentários em português.
 - Desenvolvimento local em Windows (PowerShell); produção em `ubuntu-latest` no Actions. Paths com `pathlib`, arquivos com `encoding="utf-8"`.
 - Fuso: America/Sao_Paulo (UTC-3) em datas e no nome do arquivo.

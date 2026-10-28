@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --fundo: #0c0f13;
+    --linha: #1f262e;
+    --texto: #e4e8ed;
+    --apagado: #8b949e;
+    --alta: #2cb5a0;
+    --queda: #f0605d;
+    --aviso: #e0b24f;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+    --sans: "Segoe UI", "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--fundo); width: 1080px; }
+  #card {
+    width: 1080px;
+    padding: 56px 60px 44px;
+    background: var(--fundo);
+    color: var(--texto);
+    font-family: var(--sans);
+  }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .rotulo {
+    font-size: 22px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--apagado);
+  }
+  .alta { color: var(--alta); }
+  .queda { color: var(--queda); }
+  .neutro { color: var(--apagado); }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 22px;
+    border-bottom: 2px solid var(--linha);
+  }
+  header h1 { font-size: 30px; font-weight: 600; letter-spacing: 0.2em; }
+  header .num { font-size: 30px; color: var(--apagado); }
+
+  .aviso {
+    margin-top: 28px;
+    padding: 18px 22px;
+    border: 2px solid var(--aviso);
+    border-radius: 4px;
+    color: var(--aviso);
+    font-size: 24px;
+    line-height: 1.4;
+  }
+  .aviso strong { letter-spacing: 0.1em; }
+  .aviso ul { margin-top: 6px; padding-left: 28px; color: var(--texto); font-size: 22px; }
+
+  .indice { padding: 36px 0 32px; border-bottom: 2px solid var(--linha); }
+  .indice .valor { display: flex; align-items: baseline; gap: 20px; margin-top: 10px; }
+  .indice .pontos { font-size: 76px; font-weight: 600; letter-spacing: -0.01em; }
+  .indice .unidade { font-size: 28px; color: var(--apagado); }
+  .indice .dia { margin-left: auto; font-size: 44px; font-weight: 600; }
+  .indice .periodos { display: flex; gap: 48px; margin-top: 14px; font-size: 26px; }
+  .indice .periodos span.rotulo { margin-right: 12px; font-size: 20px; }
+
+  .macro {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-bottom: 2px solid var(--linha);
+  }
+  .macro > div { padding: 28px 0 30px; }
+  .macro > div + div { padding-left: 32px; border-left: 2px solid var(--linha); }
+  .macro .valor { margin-top: 10px; font-size: 44px; font-weight: 600; }
+  .macro .valor small { font-size: 24px; font-weight: 400; color: var(--apagado); }
+  .macro .ref { margin-top: 6px; font-size: 20px; color: var(--apagado); }
+
+  table { width: 100%; margin-top: 18px; border-collapse: collapse; }
+  th {
+    padding: 14px 0;
+    font-weight: 400;
+    text-align: right;
+    border-bottom: 2px solid var(--linha);
+  }
+  th:first-child, td:first-child { text-align: left; }
+  td {
+    padding: 15px 0;
+    text-align: right;
+    font-size: 32px;
+    border-bottom: 1px solid var(--linha);
+  }
+  th + th, td + td { padding-left: 28px; }
+  td.ativo { width: 34%; }
+  td.ativo .ticker { font-family: var(--mono); font-weight: 600; }
+  td.ativo .nome {
+    display: block;
+    max-width: 380px;
+    margin-top: 2px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 19px;
+    color: var(--apagado);
+  }
+  td.ativo .sem-hoje { font-size: 18px; color: var(--aviso); margin-left: 10px; }
+  td.preco { color: var(--texto); }
+
+  footer {
+    margin-top: 30px;
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--apagado);
+  }
+</style>
+</head>
+<body>
+<div id="card">
+  <header>
+    <h1>MERCADO B3</h1>
+    <span class="num">{{ data_br }}</span>
+  </header>
+
+  {% if dia.status == "sem_pregao" %}
+  <div class="aviso"><strong>SEM PREGÃO HOJE</strong> · valores do último pregão disponível</div>
+  {% elif dia.status == "parcial" %}
+  <div class="aviso">
+    <strong>COLETA PARCIAL</strong> · alguns dados faltam ou não são de hoje
+    {% if dia.erros %}<ul>{% for erro in dia.erros %}<li>{{ erro }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endif %}
+
+  {% for indice in dia.indices %}
+  <section class="indice">
+    <div class="rotulo">{{ indice.nome }}</div>
+    <div class="valor">
+      <span class="pontos num">{{ indice.preco | numero(0) }}</span>
+      <span class="unidade">pts</span>
+      <span class="dia num {{ indice.var_dia_pct | classe }}">{{ indice.var_dia_pct | variacao }}</span>
+    </div>
+    <div class="periodos">
+      <div><span class="rotulo">Semana</span><span class="num {{ indice.var_semana_pct | classe }}">{{ indice.var_semana_pct | variacao }}</span></div>
+      <div><span class="rotulo">Mês</span><span class="num {{ indice.var_mes_pct | classe }}">{{ indice.var_mes_pct | variacao }}</span></div>
+    </div>
+  </section>
+  {% endfor %}
+
+  <section class="macro">
+    <div>
+      <div class="rotulo">Dólar PTAX</div>
+      <div class="valor num"><small>R$</small> {{ dia.macro.dolar_ptax_venda.valor | numero(4) }}</div>
+      <div class="ref num">{{ dia.macro.dolar_ptax_venda.data or "—" }}</div>
+    </div>
+    <div>
+      <div class="rotulo">Selic meta</div>
+      <div class="valor num">{{ dia.macro.selic_meta.valor | numero }}{% if dia.macro.selic_meta.valor is not none %}<small>% a.a.</small>{% endif %}</div>
+      <div class="ref">Copom</div>
+    </div>
+    <div>
+      <div class="rotulo">IPCA mensal</div>
+      <div class="valor num">{{ dia.macro.ipca_mensal.valor | numero }}{% if dia.macro.ipca_mensal.valor is not none %}<small>%</small>{% endif %}</div>
+      <div class="ref num">ref. {{ dia.macro.ipca_mensal.data | mes_ref }}</div>
+    </div>
+  </section>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="rotulo">Ativo</th>
+        <th class="rotulo">Fech. R$</th>
+        <th class="rotulo">Dia</th>
+        <th class="rotulo">Semana</th>
+        <th class="rotulo">Mês</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ativo in ativos %}
+      <tr>
+        <td class="ativo">
+          <span class="ticker">{{ ativo.ticker }}</span>{% if not ativo.dado_de_hoje %}<span class="sem-hoje">sem dado de hoje</span>{% endif %}
+          <span class="nome">{{ ativo.nome }}</span>
+        </td>
+        <td class="preco num">{{ ativo.preco | numero }}</td>
+        <td class="num {{ ativo.var_dia_pct | classe }}">{{ ativo.var_dia_pct | variacao }}</td>
+        <td class="num {{ ativo.var_semana_pct | classe }}">{{ ativo.var_semana_pct | variacao }}</td>
+        <td class="num {{ ativo.var_mes_pct | classe }}">{{ ativo.var_mes_pct | variacao }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <footer>Dados: brapi e Banco Central | coletado em {{ coletado_br }} | informativo, não é recomendação</footer>
+</div>
+</body>
+</html>
