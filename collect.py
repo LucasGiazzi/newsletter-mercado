@@ -1,6 +1,7 @@
 """Coleta diária de cotações da B3 (brapi) e indicadores do Banco Central (SGS).
 
-Grava data/AAAA-MM-DD.json no formato descrito no CLAUDE.md.
+Busca uma vez cada ticker da união dos usuários (usuarios.py) e grava data/AAAA-MM-DD.json
+no formato descrito no CLAUDE.md. Logs só com contagens, nunca tickers (privacidade).
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
 """
 
@@ -14,8 +15,9 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from usuarios import carregar_usuarios, todos_os_tickers
+
 RAIZ = Path(__file__).resolve().parent
-ARQUIVO_TICKERS = RAIZ / "tickers.txt"
 PASTA_DADOS = RAIZ / "data"
 
 BRAPI_BASE = "https://brapi.dev/api/v2/stocks"
@@ -43,16 +45,6 @@ class ErroColeta(Exception):
 
 
 # ---------- entrada ----------
-
-def ler_tickers():
-    """Lê tickers.txt ignorando linhas vazias e comentários (#)."""
-    tickers = []
-    for linha in ARQUIVO_TICKERS.read_text(encoding="utf-8").splitlines():
-        linha = linha.strip()
-        if linha and not linha.startswith("#"):
-            tickers.append(linha.upper())
-    return tickers
-
 
 def criar_sessao_brapi():
     """Sessão HTTP com o token no header (o token nunca é impresso)."""
@@ -188,15 +180,13 @@ def montar_ativo(sessao, ticker, hoje):
 
 
 def coletar_ativos(sessao, tickers, hoje, erros):
-    """Coleta cada ticker; falha em um não interrompe os demais."""
+    """Coleta cada ticker; falha em um não interrompe os demais. O detalhe vai só para o JSON."""
     ativos = []
     for ticker in tickers:
         try:
             ativos.append(montar_ativo(sessao, ticker, hoje))
-            print(f"  {ticker}: ok")
         except (ErroColeta, KeyError, TypeError, ValueError) as erro:
             erros.append(f"{ticker}: {erro}")
-            print(f"  {ticker}: ERRO {erro}")
     return ativos
 
 
@@ -254,13 +244,11 @@ def main():
     agora = datetime.now(FUSO_BRT)
     hoje = agora.date()
     erros = []
+    tickers = todos_os_tickers(carregar_usuarios())
 
     sessao = criar_sessao_brapi()
-    print("Índices:")
     indices = coletar_ativos(sessao, INDICES, hoje, erros)
-    print("Ativos:")
-    ativos = coletar_ativos(sessao, ler_tickers(), hoje, erros)
-    print("Macro (Banco Central)...")
+    ativos = coletar_ativos(sessao, tickers, hoje, erros)
     macro = coletar_macro(erros)
 
     resultado = {
@@ -273,7 +261,10 @@ def main():
         "erros": erros,
     }
     caminho = gravar_json(resultado, hoje)
-    print(f"Status: {resultado['status']} | erros: {len(erros)} | arquivo: {caminho.relative_to(RAIZ)}")
+    print(
+        f"Status: {resultado['status']} | ativos: {len(ativos)}/{len(tickers)} | índices: {len(indices)}/{len(INDICES)}"
+        f" | erros: {len(erros)} | arquivo: {caminho.relative_to(RAIZ)}"
+    )
 
 
 if __name__ == "__main__":

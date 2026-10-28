@@ -104,12 +104,12 @@ def fotografar(html, destino):
         navegador.close()
 
 
-def gerar_card(dia):
-    """Gera out/card-AAAA-MM-DD.png e devolve o caminho."""
+def gerar_card(dia, sufixo=""):
+    """Gera out/card-AAAA-MM-DD{sufixo}.png e devolve o caminho (sufixo: posição do usuário)."""
     PASTA_SAIDA.mkdir(exist_ok=True)
     html = renderizar_html(dia)
-    (PASTA_SAIDA / f"card-{dia['data']}.html").write_text(html, encoding="utf-8")
-    destino = PASTA_SAIDA / f"card-{dia['data']}.png"
+    (PASTA_SAIDA / f"card-{dia['data']}{sufixo}.html").write_text(html, encoding="utf-8")
+    destino = PASTA_SAIDA / f"card-{dia['data']}{sufixo}.png"
     fotografar(html, destino)
     return destino
 

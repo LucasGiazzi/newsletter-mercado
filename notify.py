@@ -1,12 +1,12 @@
-"""Envia a edição do dia ao Telegram: card em imagem + texto com destaques e notícias.
+"""Envia a edição do dia ao Telegram, uma por usuário: card em imagem + texto com destaques e notícias.
 
-O card (card.py) traz os números do JSON mais recente de data/. O texto traz as 2 maiores
-altas e baixas com manchetes relacionadas (news.py) e o contexto do mercado.
+Para cada usuário (usuarios.py): card só com os tickers dele (card.py), destaques entre os ativos
+dele e "Contexto do mercado" com os temas dele (news.py), enviados ao chat_id dele.
+Falha em um usuário não impede os outros. Logs só com contagens (privacidade).
 
-    python notify.py --previa                     gera card e notícias, só mostra o texto
-    python notify.py --noticias out/noticias-AAAA-MM-DD.json   envia reaproveitando as notícias
+    python notify.py --previa                    gera tudo e mostra os textos, sem enviar
+    python notify.py --reusar-noticias           envia reaproveitando out/noticias-AAAA-MM-DD-N.json
 
-Sem TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, funciona como --previa.
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
 """
 
@@ -17,13 +17,15 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-from card import carregar_ultimo_json, data_br, gerar_card, numero, pct
+from card import PASTA_SAIDA, carregar_ultimo_json, data_br, gerar_card, numero, pct
 from news import buscar_noticias, noticias_vazias, salvar_noticias
+from usuarios import carregar_usuarios, todos_os_tickers
 
 RAIZ = Path(__file__).resolve().parent
 
@@ -32,21 +34,47 @@ TIMEOUT = 30
 LIMITE_TELEGRAM = 4096  # caracteres visíveis, depois de interpretar o HTML
 
 
+class ErroTelegram(Exception):
+    """Falha da Bot API; a mensagem nunca contém URL (token) nem chat_id."""
+
+
+# ---------- recorte por usuário ----------
+
+def filtrar_para_usuario(dia, usuario, todos):
+    """Cópia do JSON só com os ativos do usuário; erros de tickers de outros usuários não aparecem."""
+    meus = set(usuario["tickers"])
+
+    def erro_visivel(erro):
+        origem = erro.split(":")[0]
+        return origem in meus or origem not in todos  # macro e índices valem para todos
+
+    ativos = [a for a in dia["ativos"] if a["ticker"] in meus]
+    erros = [e for e in dia["erros"] if erro_visivel(e)]
+    if dia["status"] == "sem_pregao":
+        status = "sem_pregao"
+    elif erros or any(not a["dado_de_hoje"] for a in ativos):
+        status = "parcial"
+    else:
+        status = "ok"
+    return {**dia, "ativos": ativos, "erros": erros, "status": status}
+
+
 # ---------- notícias ----------
 
-def obter_noticias(dia, caminho):
-    """Lê o arquivo de --noticias ou busca agora. Falha nunca impede o envio."""
+def obter_noticias(dia, temas, sufixo, reusar):
+    """Reaproveita o arquivo da prévia ou busca agora. Falha nunca impede o envio."""
+    caminho = PASTA_SAIDA / f"noticias-{dia['data']}{sufixo}.json"
     try:
-        if caminho:
-            noticias = json.loads(Path(caminho).read_text(encoding="utf-8"))
+        if reusar and caminho.exists():
+            noticias = json.loads(caminho.read_text(encoding="utf-8"))
             if noticias.get("data") != dia["data"]:
-                raise ValueError(f"arquivo é de {noticias.get('data')}, o JSON é de {dia['data']}")
+                raise ValueError("arquivo de outra data")
             return noticias
-        noticias = buscar_noticias(dia)
-        print(f"Notícias salvas: {salvar_noticias(noticias)}")
+        noticias = buscar_noticias(dia, temas)
+        salvar_noticias(noticias, sufixo)
         return noticias
     except Exception as erro:  # RSS, arquivo ou formato: segue sem manchetes
-        print(f"Falha nas notícias: {type(erro).__name__}: {erro}", file=sys.stderr)
+        print(f"  notícias indisponíveis para um usuário ({type(erro).__name__})", file=sys.stderr)
         return noticias_vazias(dia)
 
 
@@ -121,13 +149,13 @@ def chamar_telegram(token, metodo, **kwargs):
     try:
         resposta = requests.post(TELEGRAM_API.format(token=token, metodo=metodo), timeout=TIMEOUT, **kwargs)
     except requests.RequestException as erro:
-        raise SystemExit(f"Falha de conexão com o Telegram ({metodo}): {type(erro).__name__}") from None
+        raise ErroTelegram(f"falha de conexão em {metodo} ({type(erro).__name__})") from None
     if resposta.status_code != 200:
         try:
             descricao = resposta.json().get("description", "")
         except ValueError:
             descricao = ""
-        raise SystemExit(f"Telegram respondeu HTTP {resposta.status_code} em {metodo}: {descricao}")
+        raise ErroTelegram(f"HTTP {resposta.status_code} em {metodo}: {descricao}")
 
 
 def enviar_card(token, chat_id, caminho, legenda):
@@ -147,10 +175,26 @@ def enviar_texto(token, chat_id, texto):
 
 # ---------- principal ----------
 
+def preparar_edicao(dia_usuario, usuario, sufixo, reusar):
+    """Card e texto de um usuário. Sem card (falha do Playwright), devolve None no lugar do caminho."""
+    try:
+        card = gerar_card(dia_usuario, sufixo)
+    except Exception as erro:  # qualquer falha do Playwright: o texto ainda é enviado
+        print(f"  card indisponível para um usuário ({type(erro).__name__})", file=sys.stderr)
+        card = None
+    noticias = obter_noticias(dia_usuario, usuario["temas"], sufixo, reusar)
+    return card, montar_texto_no_limite(dia_usuario, noticias)
+
+
+def descrever_falha(erro):
+    """Motivo da falha para o log, sem dados do usuário."""
+    return str(erro) if isinstance(erro, ErroTelegram) else type(erro).__name__
+
+
 def ler_argumentos():
-    parser = argparse.ArgumentParser(description="Envia a edição do dia ao Telegram.")
-    parser.add_argument("--previa", action="store_true", help="gera card e notícias e mostra o texto, sem enviar")
-    parser.add_argument("--noticias", help="reaproveita um out/noticias-AAAA-MM-DD.json em vez de buscar de novo")
+    parser = argparse.ArgumentParser(description="Envia a edição do dia ao Telegram, uma por usuário.")
+    parser.add_argument("--previa", action="store_true", help="gera cards e notícias e mostra os textos, sem enviar")
+    parser.add_argument("--reusar-noticias", action="store_true", help="reaproveita as notícias salvas pela prévia")
     return parser.parse_args()
 
 
@@ -159,29 +203,34 @@ def main():
     args = ler_argumentos()
     load_dotenv(RAIZ / ".env")
     dia = carregar_ultimo_json()
+    usuarios = carregar_usuarios()
+    todos = todos_os_tickers(usuarios)
 
-    try:
-        card = gerar_card(dia)
-        print(f"Card gerado: {card}")
-    except Exception as erro:  # qualquer falha do Playwright: o texto ainda é enviado
-        card = None
-        print(f"Falha ao gerar o card: {type(erro).__name__}: {erro}", file=sys.stderr)
-
-    texto = montar_texto_no_limite(dia, obter_noticias(dia, args.noticias))
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if args.previa or not (token and chat_id):
-        print(f"--- texto ({tamanho_visivel(texto)} caracteres visíveis) ---")
-        print(texto)
-        if not args.previa:
-            print("\n(TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID não definidos: nada enviado)", file=sys.stderr)
-    else:
-        if card:
-            enviar_card(token, chat_id, card, f"Mercado B3 · {data_br(dia['data'])}")
-        enviar_texto(token, chat_id, texto)
-        print("Edição enviada ao Telegram.")
+    enviar = not args.previa and bool(token)
+    if not args.previa and not token:
+        print("TELEGRAM_BOT_TOKEN não definido: nada será enviado.", file=sys.stderr)
 
-    if card is None:
+    enviados, sem_card, falhas = 0, 0, Counter()
+    for posicao, usuario in enumerate(usuarios, 1):
+        try:
+            dia_usuario = filtrar_para_usuario(dia, usuario, todos)
+            card, texto = preparar_edicao(dia_usuario, usuario, f"-{posicao}", args.reusar_noticias)
+            sem_card += card is None
+            if enviar:
+                if card:
+                    enviar_card(token, usuario["chat_id"], card, f"Mercado B3 · {data_br(dia['data'])}")
+                enviar_texto(token, usuario["chat_id"], texto)
+                enviados += 1
+            else:  # prévia local: aqui o conteúdo aparece, porque é para o dono conferir
+                print(f"\n=== Prévia {posicao}/{len(usuarios)} · card: {card} ===\n{texto}")
+        except Exception as erro:  # um usuário com problema não impede os outros
+            falhas[descrever_falha(erro)] += 1
+
+    print(f"Usuários: {len(usuarios)} | enviados: {enviados} | falhas: {sum(falhas.values())} | sem card: {sem_card}")
+    for motivo, total in falhas.items():
+        print(f"  falha: {motivo} x{total}")
+    if falhas or sem_card:
         sys.exit(1)
 
 

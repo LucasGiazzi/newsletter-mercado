@@ -1,0 +1,65 @@
+name: Coleta diária
+
+on:
+  schedule:
+    - cron: "30 21 * * 1-5"  # 18h30 em Brasília (UTC-3), dias úteis
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coleta
+  cancel-in-progress: false
+
+jobs:
+  # Trava de privacidade: em eventos "schedule" o github.event não traz o repositório,
+  # então github.event.repository.private viria vazio. A visibilidade é consultada na API.
+  visibilidade:
+    runs-on: ubuntu-latest
+    outputs:
+      privado: ${{ steps.consulta.outputs.privado }}
+    steps:
+      - id: consulta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "privado=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" >> "$GITHUB_OUTPUT"
+
+  coleta:
+    needs: visibilidade
+    # Só roda em repositório privado: uma cópia pública nunca processa dados de usuários
+    if: needs.visibilidade.outputs.privado == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Coletar cotações
+        env:
+          BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}
+          USUARIOS_YAML: ${{ secrets.USUARIOS_YAML }}
+        run: python collect.py
+
+      - name: Commitar o JSON do dia
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/*.json  # data/*.json é ignorado no template público
+          git diff --cached --quiet || git commit -m "Coleta $(TZ=America/Sao_Paulo date +%F)"
+          git push
+
+      - name: Enviar ao Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          USUARIOS_YAML: ${{ secrets.USUARIOS_YAML }}
+        run: python notify.py
