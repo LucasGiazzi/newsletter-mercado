@@ -12,6 +12,7 @@ Repositório template que gera, todo dia útil, um JSON com cotações de açõe
 [GitHub Actions, dias úteis 18h30 BRT]
    collect.py -> brapi (cotações) + Banco Central SGS (Selic, IPCA, dólar)
         └-> data/AAAA-MM-DD.json  (commitado no próprio repo)
+   notify.py -> resumo do JSON mais recente no Telegram (bot privado)
 
 [Agente de narrativa, ~19h, fora deste repo]
    lê o JSON do dia + pesquisa notícias -> escreve a edição
@@ -25,9 +26,10 @@ Princípio: **API mede, notícia explica.** Este repo cuida só da medição. To
 .github/workflows/coleta.yml   agendamento no GitHub Actions
 data/                          um JSON por dia útil
 collect.py                     script coletor
+notify.py                      envia o resumo ao Telegram (--previa só mostra)
 tickers.txt                    um ticker por linha; linhas com # são comentário
 requirements.txt               requests, python-dotenv
-.env                           BRAPI_TOKEN=... (local, fora do Git)
+.env                           BRAPI_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (local, fora do Git)
 ```
 
 ## Regras invioláveis
@@ -36,6 +38,8 @@ requirements.txt               requests, python-dotenv
 - Falha em um ticker não derruba a coleta: registra em `erros` e segue.
 - O JSON é sempre gravado, mesmo com erros, para a edição poder avisar o que falhou.
 - Projeto informativo: nada no código, README ou saídas sugere comprar, vender ou manter ativos.
+- **Privacidade e custo zero são prioridades.** Cada pessoa roda a própria cópia **privada** ("Use this template" → Private; fork de repo público é sempre público). Nada pode exigir plano pago (ex.: GitHub Pages em repo privado precisa de Pro). Visualização é pelo Telegram, que é privado e grátis.
+- O token do Telegram vai na URL da API: nunca imprimir URL nem exceção crua do `requests` em `notify.py`.
 
 ## brapi (verificado em 28/10/2026, docs: https://brapi.dev/docs)
 
@@ -102,8 +106,8 @@ Variações de semana e mês usam os fechamentos **anteriores a hoje** no histó
 2. [x] Repositório e estrutura
 3. [ ] `collect.py`
 4. [ ] Rodar local e validar números
-5. [ ] GitHub Actions (`coleta.yml`, Secret `BRAPI_TOKEN`)
+5. [ ] GitHub Actions (`coleta.yml`, Secrets `BRAPI_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; coleta → commit → notify)
 6. [ ] Camada de narrativa (fora do repo)
-7. [ ] README de template para amigos
+7. [ ] README de template para amigos (cópia privada, `tickers.txt` de exemplo, template sem JSONs em `data/`)
 
 Evoluções depois da v1: juros futuros (DI) como termômetro de risco, variação no ano com os JSONs acumulados, edição semanal.
