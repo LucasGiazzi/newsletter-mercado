@@ -12,14 +12,14 @@ Repositório template que gera, todo dia útil, um JSON com cotações de açõe
 [GitHub Actions, dias úteis 18h30 BRT]
    collect.py -> brapi (cotações) + Banco Central SGS (Selic, IPCA, dólar)
         └-> data/AAAA-MM-DD.json  (commitado no próprio repo)
-   notify.py -> card.py (PNG com os números) + texto -> Telegram (bot privado)
+   notify.py -> card.py (PNG com os números)
+             + news.py (manchetes do Google News RSS) -> texto -> Telegram (bot privado)
 
 [Agente de narrativa, ~19h, fora deste repo]
    lê o JSON do dia + pesquisa notícias -> escreve a edição
-   -> JSON de notícias para `notify.py --noticias` (quem dispara o envio com notícias: decidir na etapa 5/6)
 ```
 
-Princípio: **API mede, notícia explica.** Este repo cuida só da medição. Todo número da newsletter vem do JSON.
+Princípio: **API mede, notícia explica.** Todo número vem do JSON. As manchetes do `news.py` são só contexto relacionado: nunca são fonte de número nem explicação de causa.
 
 ## Estrutura
 
@@ -29,8 +29,9 @@ data/                          um JSON por dia útil
 collect.py                     script coletor
 card.py                        gera out/card-AAAA-MM-DD.png (Jinja2 + Playwright)
 templates/card.html            template do card
+news.py                        manchetes relacionadas -> out/noticias-AAAA-MM-DD.json
 notify.py                      envia card + texto ao Telegram (--previa só gera e mostra)
-out/                           cards gerados (fora do Git)
+out/                           cards e notícias gerados (fora do Git)
 tickers.txt                    um ticker por linha; linhas com # são comentário
 requirements.txt               requests, python-dotenv, jinja2, playwright
 .env                           BRAPI_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (local, fora do Git)
@@ -74,10 +75,24 @@ Duas mensagens por edição, nesta ordem:
 1. **`sendPhoto` com o card** (`card.py`): só números do JSON. Ibovespa, dólar PTAX, Selic, IPCA e tabela dos ativos (fechamento, dia, semana, mês) ordenada pela variação do dia. Aviso no topo se `status` for `parcial` ou `sem_pregao`. Rodapé: "Dados: brapi e Banco Central | coletado em X | informativo, não é recomendação".
    - Visual de terminal financeiro: fundo escuro, números em fonte mono tabular alinhados à direita, verde (`#2cb5a0`) e vermelho (`#f0605d`) **só nas variações**, sempre com sinal +/−. O par foi validado para daltonismo e contraste. Sem gradientes.
    - Playwright/Chromium, viewport de 1080 px, `device_scale_factor=2`, screenshot só do `#card`. Sem recursos externos no template.
-2. **`sendMessage` com o texto** (HTML, sem preview de link): destaques automáticos do JSON (Ibovespa, maior e menor variação, avisos) + destaques e notícias de `--noticias arquivo.json`:
-   `{"destaques": ["..."], "noticias": [{"titulo": "...", "url": "https://...", "fonte": "..."}]}`. Todo texto passa por `html.escape`; só links `http(s)`.
+2. **`sendMessage` com o texto** (`parse_mode=HTML`, sem preview de link): avisos de status, linha do Ibovespa e, para as 2 maiores altas e as 2 maiores baixas do dia (`news.py`):
+   ```
+   ▲ WEGE3 +2,25%
+     • <a href="link">Manchete</a> (fonte)
+   ```
+   Sem manchete: "sem notícia específica"; busca com falha: "notícias indisponíveis". Depois vem a seção "Contexto do mercado", com 3 manchetes sobre "Ibovespa", e uma nota dizendo que as manchetes são **relacionadas, não a causa** do movimento. O texto nunca afirma causalidade. Todo texto passa por `html.escape`; só links `https`.
+   - Limite: 4096 caracteres **visíveis** (o Telegram conta depois de interpretar o HTML). Se passar, cortam-se manchetes do contexto e depois as do último ativo.
 
-Se o card falhar, o texto é enviado mesmo assim e o script sai com código 1. Credenciais só via `.env` ou Secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Para obter o chat_id: mandar mensagem ao bot e abrir `getUpdates`.
+### Notícias (`news.py`)
+
+- Google News RSS, `https://news.google.com/rss/search?q=<busca> when:1d&hl=pt-BR&gl=BR&ceid=BR:pt-419`. Não usa token; o XML é lido com `xml.etree` da biblioteca padrão. Itens: `title` ("Manchete - Fonte", o sufixo é removido), `link` (redirecionamento do Google, com até ~600 caracteres), `pubDate`, `source`.
+- Busca por ativo: nome limpo + ticker. O nome limpo sai do `nome` sem SA/S.A./Pfd/ON/PN/Holding e sem o que vem depois de " - ". Exemplo: "Itau Unibanco Holding SA Pfd" vira "Itau Unibanco ITUB4".
+- Seleção dos ativos: só ativos com `dado_de_hoje`. Altas são as variações > 0 e baixas as < 0; num dia sem nenhuma alta, não há ▲.
+- Escolha das manchetes: até 2 por ativo, publicadas nas últimas 24h, sem repetir título ou link na mensagem. Manchetes que citam o ticker ou o nome no título vêm primeiro.
+- **Filtros:** ficam de fora manchetes com tom de recomendação (recomenda, comprar, vender, vale a pena, preço-alvo, potencial de valorização), por causa da regra de projeto informativo, e páginas de cotação ("BBDC4 - Banco Bradesco - Resultados, Dividendos, Cotação…").
+- Saída: `out/noticias-AAAA-MM-DD.json` (`{"data", "movimentos": [{"ticker", "var_dia_pct", "busca_ok", "noticias": [...]}], "contexto": [...]}`). Para enviar exatamente o que apareceu na prévia: `python notify.py --noticias out/noticias-AAAA-MM-DD.json`. Sem `--noticias`, o notify busca na hora.
+
+Falhas não bloqueiam o envio: falha no RSS ou nas notícias segue sem manchetes; falha no card ainda envia o texto, e o script sai com código 1. Credenciais só via `.env` ou Secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Para obter o chat_id: mandar mensagem ao bot e abrir `getUpdates`.
 
 No Actions, instalar o navegador com `python -m playwright install --with-deps chromium`.
 

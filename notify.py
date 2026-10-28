@@ -1,19 +1,21 @@
 """Envia a edição do dia ao Telegram: card em imagem + texto com destaques e notícias.
 
-O card (card.py) traz os números do JSON mais recente de data/. O texto traz destaques
-automáticos do JSON e, opcionalmente, destaques e notícias da camada de narrativa:
+O card (card.py) traz os números do JSON mais recente de data/. O texto traz as 2 maiores
+altas e baixas com manchetes relacionadas (news.py) e o contexto do mercado.
 
-    python notify.py --noticias arquivo.json
-    {"destaques": ["texto", ...], "noticias": [{"titulo": "...", "url": "https://...", "fonte": "..."}]}
+    python notify.py --previa                     gera card e notícias, só mostra o texto
+    python notify.py --noticias out/noticias-AAAA-MM-DD.json   envia reaproveitando as notícias
 
-Sem TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID (ou com --previa), gera o card e só mostra o texto.
+Sem TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, funciona como --previa.
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
 """
 
 import argparse
+import copy
 import html
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -21,61 +23,95 @@ import requests
 from dotenv import load_dotenv
 
 from card import carregar_ultimo_json, data_br, gerar_card, numero, pct
+from news import buscar_noticias, noticias_vazias, salvar_noticias
 
 RAIZ = Path(__file__).resolve().parent
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{metodo}"
 TIMEOUT = 30
+LIMITE_TELEGRAM = 4096  # caracteres visíveis, depois de interpretar o HTML
+
+
+# ---------- notícias ----------
+
+def obter_noticias(dia, caminho):
+    """Lê o arquivo de --noticias ou busca agora. Falha nunca impede o envio."""
+    try:
+        if caminho:
+            noticias = json.loads(Path(caminho).read_text(encoding="utf-8"))
+            if noticias.get("data") != dia["data"]:
+                raise ValueError(f"arquivo é de {noticias.get('data')}, o JSON é de {dia['data']}")
+            return noticias
+        noticias = buscar_noticias(dia)
+        print(f"Notícias salvas: {salvar_noticias(noticias)}")
+        return noticias
+    except Exception as erro:  # RSS, arquivo ou formato: segue sem manchetes
+        print(f"Falha nas notícias: {type(erro).__name__}: {erro}", file=sys.stderr)
+        return noticias_vazias(dia)
 
 
 # ---------- texto ----------
 
-def destaques_automaticos(dia):
-    """Destaques tirados só dos números do JSON."""
-    destaques = []
+def linha_manchete(manchete):
+    link = f'<a href="{html.escape(manchete["url"], quote=True)}">{html.escape(manchete["titulo"])}</a>'
+    return link + (f" ({html.escape(manchete['fonte'])})" if manchete.get("fonte") else "")
+
+
+def bloco_movimento(mov):
+    seta = "▲" if mov["var_dia_pct"] > 0 else "▼"
+    linhas = [f"{seta} <b>{html.escape(mov['ticker'])}</b> {pct(mov['var_dia_pct'])}%"]
+    if mov["noticias"]:
+        linhas += [f"  • {linha_manchete(m)}" for m in mov["noticias"]]
+    else:
+        linhas.append("  <i>sem notícia específica</i>" if mov["busca_ok"] else "  <i>notícias indisponíveis</i>")
+    return "\n".join(linhas)
+
+
+def montar_texto(dia, noticias):
+    cabecalho = [f"<b>Destaques · {data_br(dia['data'])}</b>"]
     if dia["status"] == "sem_pregao":
-        destaques.append("Sem pregão hoje; o card mostra o último pregão disponível.")
+        cabecalho.append("Sem pregão hoje; o card mostra o último pregão disponível.")
     elif dia["status"] == "parcial":
-        destaques.append(f"Coleta parcial: {len(dia['erros'])} erro(s), listados no card.")
-
+        cabecalho.append(f"Coleta parcial: {len(dia['erros'])} erro(s), listados no card.")
     for indice in dia["indices"]:
-        destaques.append(f"{indice['nome'].title()} {pct(indice['var_dia_pct'])}% no dia, aos {numero(indice['preco'], 0)} pts.")
+        cabecalho.append(
+            f"{html.escape(indice['nome'].title())} {pct(indice['var_dia_pct'])}% no dia, aos {numero(indice['preco'], 0)} pts."
+        )
 
-    com_variacao = [a for a in dia["ativos"] if a["var_dia_pct"] is not None]
-    if com_variacao:
-        maior = max(com_variacao, key=lambda a: a["var_dia_pct"])
-        menor = min(com_variacao, key=lambda a: a["var_dia_pct"])
-        destaques.append(f"Maior variação do dia: {maior['ticker']} {pct(maior['var_dia_pct'])}%.")
-        destaques.append(f"Menor variação do dia: {menor['ticker']} {pct(menor['var_dia_pct'])}%.")
-    return [html.escape(d) for d in destaques]
-
-
-def carregar_narrativa(caminho):
-    """Lê destaques e notícias da camada de narrativa; links só http(s)."""
-    if not caminho:
-        return [], []
-    dados = json.loads(Path(caminho).read_text(encoding="utf-8"))
-    destaques = [html.escape(str(d)) for d in dados.get("destaques", [])]
-    noticias = []
-    for item in dados.get("noticias", []):
-        url = str(item.get("url", ""))
-        if not url.startswith(("https://", "http://")):
-            continue
-        linha = f'<a href="{html.escape(url, quote=True)}">{html.escape(str(item.get("titulo", url)))}</a>'
-        if item.get("fonte"):
-            linha += f" ({html.escape(str(item['fonte']))})"
-        noticias.append(linha)
-    return destaques, noticias
-
-
-def montar_texto(dia, destaques_narrativa, noticias):
-    partes = [f"<b>Destaques · {data_br(dia['data'])}</b>\n" + "\n".join(
-        f"• {d}" for d in destaques_automaticos(dia) + destaques_narrativa
-    )]
-    if noticias:
-        partes.append("<b>Notícias</b>\n" + "\n".join(f"• {n}" for n in noticias))
-    partes.append("<i>Informativo; não é recomendação de investimento.</i>")
+    partes = ["\n".join(cabecalho)]
+    partes += [bloco_movimento(mov) for mov in noticias["movimentos"]]
+    if noticias["contexto"]:
+        partes.append("<b>Contexto do mercado</b>\n" + "\n".join(f"• {linha_manchete(m)}" for m in noticias["contexto"]))
+    partes.append(
+        "<i>Manchetes relacionadas das últimas 24h (Google News); não indicam a causa dos movimentos.\n"
+        "Informativo; não é recomendação de investimento.</i>"
+    )
     return "\n\n".join(partes)
+
+
+def tamanho_visivel(texto_html):
+    """O Telegram conta o limite depois de interpretar o HTML: tags não contam."""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", texto_html)))
+
+
+def remover_ultima_manchete(noticias):
+    """Tira a manchete de menor prioridade: contexto primeiro, depois do último ativo."""
+    if noticias["contexto"]:
+        noticias["contexto"].pop()
+        return True
+    for mov in reversed(noticias["movimentos"]):
+        if mov["noticias"]:
+            mov["noticias"].pop()
+            return True
+    return False
+
+
+def montar_texto_no_limite(dia, noticias):
+    noticias = copy.deepcopy(noticias)
+    texto = montar_texto(dia, noticias)
+    while tamanho_visivel(texto) > LIMITE_TELEGRAM and remover_ultima_manchete(noticias):
+        texto = montar_texto(dia, noticias)
+    return texto
 
 
 # ---------- envio ----------
@@ -113,8 +149,8 @@ def enviar_texto(token, chat_id, texto):
 
 def ler_argumentos():
     parser = argparse.ArgumentParser(description="Envia a edição do dia ao Telegram.")
-    parser.add_argument("--previa", action="store_true", help="gera o card e mostra o texto, sem enviar")
-    parser.add_argument("--noticias", help="JSON com destaques e notícias da camada de narrativa")
+    parser.add_argument("--previa", action="store_true", help="gera card e notícias e mostra o texto, sem enviar")
+    parser.add_argument("--noticias", help="reaproveita um out/noticias-AAAA-MM-DD.json em vez de buscar de novo")
     return parser.parse_args()
 
 
@@ -131,10 +167,11 @@ def main():
         card = None
         print(f"Falha ao gerar o card: {type(erro).__name__}: {erro}", file=sys.stderr)
 
-    texto = montar_texto(dia, *carregar_narrativa(args.noticias))
+    texto = montar_texto_no_limite(dia, obter_noticias(dia, args.noticias))
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if args.previa or not (token and chat_id):
+        print(f"--- texto ({tamanho_visivel(texto)} caracteres visíveis) ---")
         print(texto)
         if not args.previa:
             print("\n(TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID não definidos: nada enviado)", file=sys.stderr)
