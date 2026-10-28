@@ -101,14 +101,18 @@ O agente de narrativa depende deste formato. Mudanças aqui precisam ser intenci
 }
 ```
 
-`<ativo>`: `ticker`, `nome`, `preco`, `var_dia_pct`, `var_semana_pct` (vs. 5 pregões antes), `var_mes_pct` (vs. 21 pregões antes), `horario_cotacao`, `dado_de_hoje` (bool).
+`<ativo>`: `ticker`, `nome`, `preco`, `var_dia_pct`, `var_semana_pct` (vs. último fechamento da semana anterior), `var_mes_pct` (vs. último fechamento do mês anterior), `horario_cotacao`, `dado_de_hoje` (bool).
 
 Regras de `status`:
 - `sem_pregao`: o Ibovespa não tem cotação com data de hoje (feriado ou fim de semana).
 - `parcial`: há erros ou algum ativo sem dado de hoje.
 - `ok`: o resto.
 
-Variações de semana e mês usam os fechamentos **anteriores a hoje** no histórico (excluir o ponto de hoje, se vier), para não depender de o histórico já ter o pregão do dia.
+Variações de semana e mês seguem o **padrão de calendário da imprensa** (desde 28/10/2026; antes eram 5 e 21 pregões):
+- semana: preço atual vs. último fechamento do histórico **antes da segunda-feira** da semana da cotação (normalmente a sexta anterior);
+- mês: preço atual vs. último fechamento **antes do dia 1º** do mês da cotação (último pregão do mês anterior).
+
+A referência é a data da cotação (`horario_cotacao`), não o relógio: em dia útil é hoje; em feriado ou fim de semana, o último pregão. Como só entram pontos anteriores à segunda-feira ou ao dia 1º, não importa se o histórico já traz o pregão do dia. O histórico de 3 meses cobre os dois casos.
 
 ## Convenções
 

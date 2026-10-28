@@ -1,6 +1,6 @@
 {
   "data": "2026-10-28",
-  "coletado_em": "2026-10-28T19:33:18-03:00",
+  "coletado_em": "2026-10-28T20:06:56-03:00",
   "status": "ok",
   "indices": [
     {
@@ -8,9 +8,9 @@
       "nome": "IBOVESPA",
       "preco": 171006.1,
       "var_dia_pct": -2.68,
-      "var_semana_pct": -17.19,
-      "var_mes_pct": -6.55,
-      "horario_cotacao": "2026-10-28T19:34:21-03:00",
+      "var_semana_pct": -16.62,
+      "var_mes_pct": -8.23,
+      "horario_cotacao": "2026-10-28T20:08:37-03:00",
       "dado_de_hoje": true
     }
   ],
@@ -20,8 +20,8 @@
       "nome": "Petroleo Brasileiro SA Pfd",
       "preco": 52.51,
       "var_dia_pct": -0.53,
-      "var_semana_pct": -9.07,
-      "var_mes_pct": 7.78,
+      "var_semana_pct": -10.51,
+      "var_mes_pct": 6.9,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -30,8 +30,8 @@
       "nome": "Vale S.A.",
       "preco": 61.38,
       "var_dia_pct": -2.57,
-      "var_semana_pct": -4.14,
-      "var_mes_pct": -13.74,
+      "var_semana_pct": -0.84,
+      "var_mes_pct": -12.2,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -40,8 +40,8 @@
       "nome": "Itau Unibanco Holding SA Pfd",
       "preco": 39.78,
       "var_dia_pct": -3.42,
-      "var_semana_pct": -18.65,
-      "var_mes_pct": -4.63,
+      "var_semana_pct": -17.64,
+      "var_mes_pct": -10.16,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -50,8 +50,8 @@
       "nome": "Banco Bradesco SA Pfd",
       "preco": 14.68,
       "var_dia_pct": -6.68,
-      "var_semana_pct": -28.91,
-      "var_mes_pct": -16.87,
+      "var_semana_pct": -27.93,
+      "var_mes_pct": -20.69,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -60,8 +60,8 @@
       "nome": "Banco do Brasil S.A.",
       "preco": 16.79,
       "var_dia_pct": -3.39,
-      "var_semana_pct": -30.33,
-      "var_mes_pct": -21.87,
+      "var_semana_pct": -32.08,
+      "var_mes_pct": -27.22,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -70,8 +70,8 @@
       "nome": "Ambev SA",
       "preco": 15.22,
       "var_dia_pct": -2.25,
-      "var_semana_pct": -8.81,
-      "var_mes_pct": 0.13,
+      "var_semana_pct": -8.75,
+      "var_mes_pct": -0.91,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -80,8 +80,8 @@
       "nome": "WEG SA",
       "preco": 47.2,
       "var_dia_pct": 2.25,
-      "var_semana_pct": 4.4,
-      "var_mes_pct": -5.83,
+      "var_semana_pct": 10.46,
+      "var_mes_pct": -4.57,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -90,8 +90,8 @@
       "nome": "B3 SA - Brasil, Bolsa, Balcao",
       "preco": 14.69,
       "var_dia_pct": -4.61,
-      "var_semana_pct": -37.52,
-      "var_mes_pct": -16.82,
+      "var_semana_pct": -37.89,
+      "var_mes_pct": -19.9,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -100,8 +100,8 @@
       "nome": "Prio SA",
       "preco": 71.7,
       "var_dia_pct": 1.8,
-      "var_semana_pct": 0.55,
-      "var_mes_pct": 16.34,
+      "var_semana_pct": -2.85,
+      "var_mes_pct": 17.73,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     },
@@ -110,8 +110,8 @@
       "nome": "Magazine Luiza S.A.",
       "preco": 5.22,
       "var_dia_pct": -9.22,
-      "var_semana_pct": -59.97,
-      "var_mes_pct": -20.91,
+      "var_semana_pct": -58.87,
+      "var_mes_pct": -30.03,
       "horario_cotacao": "2026-10-28T18:30:30-03:00",
       "dado_de_hoje": true
     }

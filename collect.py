@@ -36,8 +36,6 @@ MAX_TENTATIVAS = 3
 TIMEOUT = 20
 TIMEOUT_SGS = 30
 PAUSA_SGS = 3
-PREGOES_SEMANA = 5
-PREGOES_MES = 21
 
 
 class ErroColeta(Exception):
@@ -154,12 +152,10 @@ def variacao_pct(atual, anterior):
     return round((atual / anterior - 1) * 100, 2)
 
 
-def fechamento_n_pregoes_antes(historico, data_ref, n):
-    """Fechamento n pregões antes de data_ref, usando só pontos anteriores a ela."""
-    anteriores = [fechamento for data, fechamento in historico if data < data_ref]
-    if len(anteriores) < n:
-        return None
-    return anteriores[-n]
+def ultimo_fechamento_antes(historico, limite):
+    """Último fechamento com data anterior a 'limite'; None se o histórico não alcança."""
+    anteriores = [fechamento for data, fechamento in historico if data < limite]
+    return anteriores[-1] if anteriores else None
 
 
 def montar_ativo(sessao, ticker, hoje):
@@ -174,6 +170,9 @@ def montar_ativo(sessao, ticker, hoje):
     historico = buscar_historico(sessao, ticker)
     # Referência é a data da cotação: em dia útil é hoje; em feriado, o último pregão
     data_ref = horario.date()
+    # Padrão de calendário da imprensa: vs. último fechamento da semana e do mês anteriores
+    fim_semana_anterior = ultimo_fechamento_antes(historico, data_ref - timedelta(days=data_ref.weekday()))
+    fim_mes_anterior = ultimo_fechamento_antes(historico, data_ref.replace(day=1))
     var_dia = cotacao.get("regularMarketChangePercent")
 
     return {
@@ -181,8 +180,8 @@ def montar_ativo(sessao, ticker, hoje):
         "nome": cotacao.get("longName") or cotacao.get("shortName") or ticker,
         "preco": preco,
         "var_dia_pct": round(var_dia, 2) if var_dia is not None else None,
-        "var_semana_pct": variacao_pct(preco, fechamento_n_pregoes_antes(historico, data_ref, PREGOES_SEMANA)),
-        "var_mes_pct": variacao_pct(preco, fechamento_n_pregoes_antes(historico, data_ref, PREGOES_MES)),
+        "var_semana_pct": variacao_pct(preco, fim_semana_anterior),
+        "var_mes_pct": variacao_pct(preco, fim_mes_anterior),
         "horario_cotacao": horario.isoformat(),
         "dado_de_hoje": horario.date() == hoje,
     }
