@@ -41,11 +41,11 @@ requirements.txt               requests, python-dotenv
 
 Base: `https://brapi.dev/api/v2/stocks`. Autenticação: header `Authorization: Bearer <token>`.
 
-- **Cotação:** `GET /quote?symbols=PETR4`. Resposta: `results[].data` com `shortName`, `regularMarketPrice`, `regularMarketChangePercent`, `regularMarketTime` (ISO UTC).
-- **Histórico:** `GET /historical?symbols=PETR4&range=3mo&interval=1d&sortOrder=asc`. Resposta: `results[].data.historicalDataPrice[]` com `date`, `open`, `high`, `low`, `close`, `volume`. O formato de `date` (unix ou ISO) não foi confirmado: tratar os dois.
+- **Cotação:** `GET /quote?symbols=PETR4`. Resposta: `results[].data` com `shortName`, `longName`, `regularMarketPrice`, `regularMarketChangePercent`, `regularMarketTime` (ISO UTC). Em ações, `shortName` é só o ticker; o `nome` do JSON usa `longName`.
+- **Histórico:** `GET /historical?symbols=PETR4&range=3mo&interval=1d&sortOrder=asc`. Resposta: `results[].data.historicalDataPrice[]` com `date`, `open`, `high`, `low`, `close`, `volume`, `adjustedClose`. `date` é unix em segundos, meia-noite BRT (o código também aceita ISO). O histórico **já inclui o pregão do dia** após o fechamento.
 - **Sem token** respondem: PETR4, VALE3, ITUB4, MGLU3. Use-os para inspecionar o formato real.
 - **Plano gratuito:** 15.000 req/mês, 1 ticker por chamada, 1 requisição simultânea, histórico de até 3 meses, atraso ~30 min. Por isso: um ticker por vez, pausa de ~1,5 s entre chamadas.
-- **Ibovespa:** `^BVSP` (confirmar que funciona no v2).
+- **Ibovespa:** `^BVSP` funciona no v2 (quote e historical), mas **exige token** (sem token: 401 `MISSING_TOKEN`).
 - Erros: 401 token inválido, 403 fora do plano, 429 limite (respeitar `Retry-After`).
 - Existe a API antiga `/api/quote/{ticker}`, mas usar a v2.
 
@@ -56,6 +56,8 @@ Base: `https://brapi.dev/api/v2/stocks`. Autenticação: header `Authorization: 
 - 432: Selic meta (% a.a.)
 - 433: IPCA mensal (%)
 - 1: dólar comercial venda (PTAX, R$)
+
+Instável: respostas de ~15 s e 502 intermitente; o coletor tenta 3 vezes por série. A série 432 pode vir com data futura (vigência até a próxima reunião do Copom).
 
 ## Contrato do JSON de saída
 
