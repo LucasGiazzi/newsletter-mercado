@@ -33,6 +33,7 @@ news.py                        manchetes relacionadas -> out/noticias-AAAA-MM-DD
 notify.py                      envia card + texto ao Telegram (--previa só gera e mostra)
 out/                           cards e notícias gerados (fora do Git)
 tickers.txt                    um ticker por linha; linhas com # são comentário
+fontes.txt                     fontes de notícia aceitas pelo news.py (mesmo formato)
 requirements.txt               requests, python-dotenv, jinja2, playwright
 .env                           BRAPI_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (local, fora do Git)
 ```
@@ -88,9 +89,16 @@ Duas mensagens por edição, nesta ordem:
 - Google News RSS, `https://news.google.com/rss/search?q=<busca> when:1d&hl=pt-BR&gl=BR&ceid=BR:pt-419`. Não usa token; o XML é lido com `xml.etree` da biblioteca padrão. Itens: `title` ("Manchete - Fonte", o sufixo é removido), `link` (redirecionamento do Google, com até ~600 caracteres), `pubDate`, `source`.
 - Busca por ativo: nome limpo + ticker. O nome limpo sai do `nome` sem SA/S.A./Pfd/ON/PN/Holding e sem o que vem depois de " - ". Exemplo: "Itau Unibanco Holding SA Pfd" vira "Itau Unibanco ITUB4".
 - Seleção dos ativos: só ativos com `dado_de_hoje`. Altas são as variações > 0 e baixas as < 0; num dia sem nenhuma alta, não há ▲.
-- Escolha das manchetes: até 2 por ativo, publicadas nas últimas 24h, sem repetir título ou link na mensagem. Manchetes que citam o ticker ou o nome no título vêm primeiro.
-- **Filtros:** ficam de fora manchetes com tom de recomendação (recomenda, comprar, vender, vale a pena, preço-alvo, potencial de valorização), por causa da regra de projeto informativo, e páginas de cotação ("BBDC4 - Banco Bradesco - Resultados, Dividendos, Cotação…").
-- Saída: `out/noticias-AAAA-MM-DD.json` (`{"data", "movimentos": [{"ticker", "var_dia_pct", "busca_ok", "noticias": [...]}], "contexto": [...]}`). Para enviar exatamente o que apareceu na prévia: `python notify.py --noticias out/noticias-AAAA-MM-DD.json`. Sem `--noticias`, o notify busca na hora.
+- Escolha das manchetes: até 2 por ativo e 3 de contexto, na ordem do Google. Cada manchete passa por `motivo_descarte`, e **o primeiro motivo que se aplicar** é o registrado:
+  1. `sem data` / `mais de 24h`: o `pubDate` é conferido de novo; o `when:1d` sozinho não basta.
+  2. `fonte fora da lista`: a lista fica em **`fontes.txt`**, editável como o `tickers.txt`. A fonte é aceita se o nome começar por um item da lista, sem diferenciar maiúsculas e acentos ("Valor" aceita "Valor Investe"). Sem o arquivo, não há filtro de fonte.
+  3. `não cita o ativo no título` (só nos destaques por ativo): o título tem que conter o ticker (qualquer caixa) ou o nome limpo ou um apelido de `APELIDOS` em `news.py`, por exemplo Petrobras, Itau, Bradesco, PetroRio e Magalu. Nomes são comparados com caixa exata, para "Vale" não casar com "vale". **Ao incluir um ticker cujo nome na imprensa difere do `longName`, acrescente o apelido.**
+  4. `página de cotação` ("BBDC4 - Banco Bradesco - Resultados, Dividendos, Cotação…").
+  5. `especulativo`: título terminado em "?", ou com "pode disparar", "vale a pena", "comprar" ou "ações para".
+  6. `tom de recomendação`: "recomenda", "vender", "preço-alvo", "potencial de valorização". Segue a regra de projeto informativo.
+  7. `repetida`: mesmo título ou link já usado na mensagem.
+- Sem manchete válida para o ativo: "sem notícia específica". Isso é esperado com os filtros rígidos.
+- Saída: `out/noticias-AAAA-MM-DD.json` (`{"data", "movimentos": [{"ticker", "var_dia_pct", "busca_ok", "noticias": [...]}], "contexto": [...], "descartes": [{"busca", "motivo", "titulo", "fonte"}]}`). `python news.py` imprime o resumo dos descartes. Para enviar exatamente o que apareceu na prévia: `python notify.py --noticias out/noticias-AAAA-MM-DD.json`. Sem `--noticias`, o notify busca na hora.
 
 Falhas não bloqueiam o envio: falha no RSS ou nas notícias segue sem manchetes; falha no card ainda envia o texto, e o script sai com código 1. Credenciais só via `.env` ou Secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Para obter o chat_id: mandar mensagem ao bot e abrir `getUpdates`.
 

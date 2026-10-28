@@ -1,0 +1,19 @@
+# Fontes aceitas pelo news.py (uma por linha; linhas com # são comentário)
+# Vale o começo do nome da fonte no Google News, sem diferenciar maiúsculas e acentos:
+# "Valor" aceita "Valor Investe" e "Valor Econômico".
+# Sem este arquivo, todas as fontes são aceitas.
+Valor
+InfoMoney
+Money Times
+Estadão
+Folha
+G1
+Exame
+CNN Brasil
+Agência Brasil
+Reuters
+Bloomberg Línea
+Seu Dinheiro
+Suno
+Guia do Investidor
+Poder360
