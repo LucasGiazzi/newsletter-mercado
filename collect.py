@@ -38,6 +38,10 @@ MAX_TENTATIVAS = 3
 TIMEOUT = 20
 TIMEOUT_SGS = 30
 PAUSA_SGS = 3
+CABECALHOS_SGS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+    "Accept": "application/json",
+}
 
 
 class ErroColeta(Exception):
@@ -191,31 +195,68 @@ def coletar_ativos(sessao, tickers, erros):
 
 # ---------- Banco Central ----------
 
+def ler_resposta_sgs(resposta):
+    """Último ponto da série. Quando não é o JSON esperado, o erro diz o que veio (para diagnóstico)."""
+    tipo = resposta.headers.get("content-type", "?").split(";")[0]
+    if resposta.status_code != 200:
+        raise ErroColeta(f"HTTP {resposta.status_code} ({tipo})")
+    try:
+        dados = resposta.json()
+    except ValueError:
+        raise ErroColeta(f"resposta não é JSON (HTTP 200, {tipo})") from None
+    try:
+        ultimo = dados[-1]
+        return {"data": ultimo["data"], "valor": float(ultimo["valor"])}
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise ErroColeta(f"JSON sem data/valor (HTTP 200, {tipo})") from None
+
+
 def buscar_serie_sgs(codigo):
     """Último valor de uma série do SGS: {'data': 'dd/mm/aaaa', 'valor': float}.
 
-    O SGS é lento e devolve 502 de vez em quando, por isso tenta algumas vezes.
+    O SGS é lento e devolve 502 de vez em quando, por isso tenta algumas vezes. Do GitHub
+    Actions (fora do Brasil) já respondeu página HTML no lugar do JSON: daí os cabeçalhos de navegador.
     """
+    motivo = ""
     for tentativa in range(1, MAX_TENTATIVAS + 1):
         try:
-            resposta = requests.get(SGS_URL.format(codigo=codigo), timeout=TIMEOUT_SGS)
-            resposta.raise_for_status()
-            ultimo = resposta.json()[-1]
-            return {"data": ultimo["data"], "valor": float(ultimo["valor"])}
-        except (requests.RequestException, ValueError, KeyError, IndexError) as erro:
-            if tentativa == MAX_TENTATIVAS:
-                raise ErroColeta(f"SGS {codigo}: {type(erro).__name__} após {MAX_TENTATIVAS} tentativas") from erro
+            resposta = requests.get(SGS_URL.format(codigo=codigo), headers=CABECALHOS_SGS, timeout=TIMEOUT_SGS)
+            return ler_resposta_sgs(resposta)
+        except requests.RequestException as erro:
+            motivo = type(erro).__name__
+        except ErroColeta as erro:
+            motivo = str(erro)
+        if tentativa < MAX_TENTATIVAS:
             time.sleep(PAUSA_SGS)
+    raise ErroColeta(f"SGS {codigo}: {motivo} após {MAX_TENTATIVAS} tentativas")
 
 
-def coletar_macro(erros):
+def ultimo_valor_conhecido(nome, hoje):
+    """Valor mais recente da série em coletas anteriores (data/AAAA-MM-DD.json), com a data original."""
+    for caminho in sorted(PASTA_DADOS.glob("????-??-??.json"), reverse=True):
+        if caminho.stem >= hoje.isoformat():
+            continue
+        try:
+            serie = json.loads(caminho.read_text(encoding="utf-8")).get("macro", {}).get(nome) or {}
+        except ValueError:
+            continue
+        if serie.get("valor") is not None:
+            return {"data": serie["data"], "valor": serie["valor"], "repetido": True}
+    return None
+
+
+def coletar_macro(erros, hoje):
+    """Selic, IPCA e PTAX. Se o SGS falhar, usa o último valor conhecido (Selic e IPCA mudam pouco)
+    e registra o erro mesmo assim, para o status ficar "parcial"."""
     macro = {}
     for nome, codigo in SERIES_SGS.items():
         try:
             macro[nome] = buscar_serie_sgs(codigo)
         except ErroColeta as erro:
-            macro[nome] = {"data": None, "valor": None}
-            erros.append(f"{nome}: {erro}")
+            anterior = ultimo_valor_conhecido(nome, hoje)
+            macro[nome] = anterior or {"data": None, "valor": None}
+            complemento = f"; usado o último valor conhecido ({anterior['data']})" if anterior else ""
+            erros.append(f"{nome}: {erro}{complemento}")
     return macro
 
 
@@ -270,7 +311,7 @@ def main():
     sessao = criar_sessao_brapi()
     indices = coletar_ativos(sessao, INDICES, erros)
     ativos = coletar_ativos(sessao, tickers, erros)
-    macro = coletar_macro(erros)
+    macro = coletar_macro(erros, hoje)
 
     pregao = definir_pregao(indices, ativos)
     for ativo in indices + ativos:

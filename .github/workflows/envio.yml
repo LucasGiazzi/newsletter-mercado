@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 30
     steps:
       # Código, dados do dia e registro de envios vêm sempre da branch principal
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           fetch-depth: 0
@@ -75,7 +75,7 @@ jobs:
             echo "enviar=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.decisao.outputs.enviar == 'true'
         with:
           python-version: "3.12"
@@ -86,6 +86,11 @@ jobs:
         run: |
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
+
+      - name: Atualizar os dados do dia
+        if: steps.decisao.outputs.enviar == 'true'
+        # A instalação leva ~2,5 min: pega o que foi commitado nesse intervalo (ex.: a coleta terminando)
+        run: git pull --ff-only --quiet
 
       - name: Enviar por DM no Discord
         if: steps.decisao.outputs.enviar == 'true'

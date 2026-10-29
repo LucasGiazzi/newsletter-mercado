@@ -158,6 +158,13 @@ Base: `https://brapi.dev/api/v2/stocks`. Autenticação: header `Authorization: 
 
 Instável: respostas de ~15 s e 502 intermitente; o coletor tenta 3 vezes por série. A série 432 pode vir com data futura (vigência até a próxima reunião do Copom).
 
+**Do GitHub Actions (servidores fora do Brasil), o SGS falhou nas 3 séries em 28/10/2026**, com `JSONDecodeError` e `KeyError`, enquanto na máquina local (Brasil) funcionava. A suspeita é bloqueio do firewall do BC, que devolve uma página HTML no lugar do JSON. O que foi feito:
+- cabeçalhos de navegador (`CABECALHOS_SGS`: User-Agent e Accept);
+- erro descritivo (`ler_resposta_sgs`: `resposta não é JSON (HTTP 200, text/html)`, `JSON sem data/valor`, `HTTP 502 (text/html)`) para diagnosticar pelo card ou pelo JSON;
+- **último valor conhecido** (`ultimo_valor_conhecido`): se a série falhar, usa o valor mais recente das coletas anteriores em `data/`, com a data original e `"repetido": true`. O erro continua em `erros` (status `parcial`), com "usado o último valor conhecido (dd/mm/aaaa)".
+
+Se o bloqueio for permanente, a PTAX fica parada no último valor que deu certo; a próxima opção é outra fonte gratuita acessível de fora do Brasil (ex.: Ipeadata). A brapi tem Selic, IPCA e câmbio **só no plano pago** (403 `FEATURE_NOT_AVAILABLE` no gratuito): fora, pelo custo zero.
+
 ## Discord (DM do bot, uma edição por usuário)
 
 API REST `https://discord.com/api/v10`, header `Authorization: Bot <DISCORD_BOT_TOKEN>` e `User-Agent: DiscordBot (url, versão)`. Não usa biblioteca de Discord: só `requests`, em `discord_api.py`, que é compartilhado por `notify.py` e `comandos.py`.
@@ -286,6 +293,7 @@ O agente de narrativa depende deste formato. Mudanças aqui precisam ser intenci
 
 - `data`: dia da edição (e do nome do arquivo).
 - `pregao`: data do pregão de referência = data da cotação do Ibovespa (ou a mais recente entre os ativos, se o Ibovespa falhar). Às 7h30 é o pregão anterior.
+- `macro.<série>.repetido` (opcional, `true`): o SGS falhou e o valor veio da última coleta que deu certo; `data` continua sendo a de referência original.
 
 `<ativo>`: `ticker`, `nome`, `preco`, `var_dia_pct` (variação no pregão de referência), `var_semana_pct` (vs. último fechamento da semana anterior), `var_mes_pct` (vs. último fechamento do mês anterior), `horario_cotacao`, `dado_do_pregao` (bool: a cotação é do `pregao`).
 
@@ -320,7 +328,7 @@ Os dois workflows começam pelo job `visibilidade` (`gh api repos/$GITHUB_REPOSI
 - **9h BRT (`0 12 * * 1-5`), o fallback:** procura `edicao/<hoje>.md` em todas as branches, da mais recente para a mais antiga. Se achar, envia com texto; se não, envia card + destaques.
 - **`workflow_dispatch`:** igual ao fallback.
 
-Em todos os casos, o código, `data/` e `data/enviados/` vêm da branch principal (`checkout` com `ref` = branch padrão). Depois do `notify.py`, o passo "Registrar os envios" roda com `if: always()`: commita `data/enviados/`, faz `pull --rebase` e push. Quem já recebeu nunca recebe de novo, mesmo se a tarefa do Claude atrasar além das 9h.
+Em todos os casos, o código, `data/` e `data/enviados/` vêm da branch principal (`checkout` com `ref` = branch padrão). Antes do `notify.py`, o passo "Atualizar os dados do dia" faz `git pull --ff-only`: a instalação do Chromium leva ~2,5 min, e em 28/10/2026 um envio manual disparado durante a coleta não achou o JSON do dia. Depois do `notify.py`, o passo "Registrar os envios" roda com `if: always()`: commita `data/enviados/`, faz `pull --rebase` e push. Quem já recebeu nunca recebe de novo, mesmo se a tarefa do Claude atrasar além das 9h.
 
 **Horários:** o agendamento do GitHub pode atrasar de 5 a 30 minutos. Se a coleta das 7h30 atrasar além das 8h, a tarefa do Claude não acha os arquivos e para, e o fallback das 9h envia sem texto. Se isso for comum, agende a tarefa para 8h15 ou 8h30.
 
