@@ -6,3 +6,5 @@ data/*.json
 estado/
 edicao/
 data/enviados/
+data/testes/
+data/falhas/

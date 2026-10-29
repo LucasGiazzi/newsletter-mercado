@@ -3,7 +3,7 @@
 Para as 2 maiores altas e as 2 maiores baixas do pregão entre os ativos de cada usuário e
 para o "Contexto do mercado" (temas do usuário primeiro, depois os motores de temas.yml
 mais em pauta no dia). São notícias relacionadas, não a causa do movimento.
-`python news.py` (Actions, 7h30, depois da coleta) grava data/AAAA-MM-DD-news.json com as
+`python news.py` (Actions, 6h47, depois da coleta) grava data/<pregão>-news.json com as
 manchetes de todos os usuários, por código, e o contexto geral.
 Logs só com contagens, nunca consultas ou tickers (privacidade).
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
@@ -23,7 +23,7 @@ from pathlib import Path
 import requests
 import yaml
 
-from card import PASTA_DADOS, carregar_json_do_dia, data_de_hoje
+from card import PASTA_DADOS, aviso, carregar_pregao_mais_recente, data_br, ja_enviado
 from usuarios import carregar_usuarios, filtrar_para_usuario, todos_os_tickers
 
 RAIZ = Path(__file__).resolve().parent
@@ -314,13 +314,13 @@ def buscar_noticias(dia, temas=()):
 
 # ---------- arquivo do dia ----------
 
-def caminho_noticias_do_dia(data):
-    return PASTA_DADOS / f"{data}-news.json"
+def caminho_noticias_do_pregao(pregao):
+    return PASTA_DADOS / f"{pregao}-news.json"
 
 
-def ler_noticias_do_dia(data):
-    """data/AAAA-MM-DD-news.json, ou {} se ainda não existir."""
-    caminho = caminho_noticias_do_dia(data)
+def ler_noticias_do_pregao(pregao):
+    """data/<pregão>-news.json, ou {} se ainda não existir."""
+    caminho = caminho_noticias_do_pregao(pregao)
     return json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else {}
 
 
@@ -346,11 +346,15 @@ def gerar_noticias_do_dia(dia, usuarios):
 
 
 def main():
-    """Gera data/AAAA-MM-DD-news.json para a coleta de hoje. Só contagens no terminal."""
+    """Gera data/<pregão>-news.json para o pregão mais recente. Só contagens no terminal."""
     sys.stdout.reconfigure(encoding="utf-8")  # console do Windows não é UTF-8 por padrão
-    dia = carregar_json_do_dia(data_de_hoje())
+    dia = carregar_pregao_mais_recente()
+    pregao = dia["pregao"]
+    if ja_enviado(pregao):  # a coleta não gravou pregão novo (feriado, pregão aberto ou repetida)
+        aviso("Pregão já processado", f"o pregão mais recente ({data_br(pregao)}) já foi enviado: manchetes não buscadas.")
+        return
     noticias = gerar_noticias_do_dia(dia, carregar_usuarios())
-    caminho = caminho_noticias_do_dia(dia["data"])
+    caminho = caminho_noticias_do_pregao(pregao)
     caminho.write_text(json.dumps(noticias, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     usuarios = noticias["usuarios"].values()
     manchetes = sum(len(m["noticias"]) for u in usuarios for m in u["movimentos"])

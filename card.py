@@ -6,6 +6,7 @@ Projeto informativo: não é recomendação de compra, venda ou manutenção de 
 """
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,26 +27,33 @@ FUSO_BRT = timezone(timedelta(hours=-3))
 
 
 # ---------- entrada ----------
+# Convenção: arquivos de data/ e edicao/ são nomeados pela data do PREGÃO, não pela data em
+# que a coleta ou o envio rodaram. Subpastas (data/testes/, data/enviados/) ficam de fora.
 
 def data_de_hoje():
-    """'AAAA-MM-DD' de hoje em Brasília: data da edição e nome dos arquivos do dia."""
+    """'AAAA-MM-DD' de hoje em Brasília."""
     return datetime.now(FUSO_BRT).date().isoformat()
 
 
-def carregar_json_do_dia(data):
-    """JSON da coleta da data pedida. Nunca cai para um dia anterior: reenviaria dados velhos."""
-    caminho = PASTA_DADOS / f"{data}.json"
-    if not caminho.exists():
-        raise SystemExit(f"Coleta de {data} não encontrada em data/; rode collect.py antes.")
-    return json.loads(caminho.read_text(encoding="utf-8"))
-
-
-def carregar_ultimo_json():
-    """JSON mais recente de data/ (o nome AAAA-MM-DD já ordena por data). Só para diagnóstico."""
+def carregar_pregao_mais_recente():
+    """JSON do pregão mais recente em data/ (o nome AAAA-MM-DD é a data do pregão)."""
     arquivos = sorted(PASTA_DADOS.glob("????-??-??.json"))
     if not arquivos:
-        raise SystemExit("Nenhum JSON em data/; rode collect.py antes.")
+        raise SystemExit("Nenhuma coleta em data/; rode collect.py antes.")
     return json.loads(arquivos[-1].read_text(encoding="utf-8"))
+
+
+def ja_enviado(pregao):
+    """True se a edição desse pregão já foi enviada (data/enviados/<pregão>.json existe)."""
+    return (PASTA_DADOS / "enviados" / f"{pregao}.json").exists()
+
+
+def aviso(titulo, texto):
+    """Aviso que não pode passar em silêncio: no GitHub Actions vira anotação no resumo da execução."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title={titulo}::{texto}")
+    else:
+        print(f"{titulo}: {texto}")
 
 
 # ---------- formatação (também usada pelo notify.py) ----------
@@ -120,18 +128,18 @@ def fotografar(html, destino):
 
 
 def gerar_card(dia, sufixo=""):
-    """Gera out/card-AAAA-MM-DD{sufixo}.png e devolve o caminho (sufixo: posição do usuário)."""
+    """Gera out/card-<pregão>{sufixo}.png e devolve o caminho (sufixo: código do usuário)."""
     PASTA_SAIDA.mkdir(exist_ok=True)
     html = renderizar_html(dia)
-    (PASTA_SAIDA / f"card-{dia['data']}{sufixo}.html").write_text(html, encoding="utf-8")
-    destino = PASTA_SAIDA / f"card-{dia['data']}{sufixo}.png"
+    (PASTA_SAIDA / f"card-{dia.get('pregao') or dia['data']}{sufixo}.html").write_text(html, encoding="utf-8")
+    destino = PASTA_SAIDA / f"card-{dia.get('pregao') or dia['data']}{sufixo}.png"
     fotografar(html, destino)
     return destino
 
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")  # console do Windows não é UTF-8 por padrão
-    print(f"Card gerado: {gerar_card(carregar_ultimo_json())}")
+    print(f"Card gerado: {gerar_card(carregar_pregao_mais_recente())}")
 
 
 if __name__ == "__main__":

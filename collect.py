@@ -1,7 +1,9 @@
 """Coleta diária de cotações da B3 (brapi) e indicadores do Banco Central (SGS).
 
-Busca uma vez cada ticker da união dos usuários (usuarios.py) e grava data/AAAA-MM-DD.json
-no formato descrito no CLAUDE.md. Logs só com contagens, nunca tickers (privacidade).
+Busca uma vez cada ticker da união dos usuários (usuarios.py) e grava data/<pregão>.json
+(nome = data do PREGÃO de referência) no formato descrito no CLAUDE.md. Não grava, e avisa
+no Actions, se o pregão ainda estiver aberto ou já tiver sido enviado.
+Logs só com contagens, nunca tickers (privacidade).
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
 """
 
@@ -9,16 +11,20 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as horario, timedelta, timezone
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
+from card import aviso, ja_enviado
 from usuarios import carregar_usuarios, todos_os_tickers
 
 RAIZ = Path(__file__).resolve().parent
 PASTA_DADOS = RAIZ / "data"
+PASTA_FALHAS = PASTA_DADOS / "falhas"  # coleta sem nenhuma cotação (não tem data de pregão)
+# Antes disso, a cotação "de hoje" ainda é do pregão aberto: não pode virar "fechamento"
+FECHAMENTO_PREGAO = horario(18, 30)
 
 BRAPI_BASE = "https://brapi.dev/api/v2/stocks"
 SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados/ultimos/1?formato=json"
@@ -232,8 +238,13 @@ def buscar_serie_sgs(codigo):
 
 
 def ultimo_valor_conhecido(nome, hoje):
-    """Valor mais recente da série em coletas anteriores (data/AAAA-MM-DD.json), com a data original."""
-    for caminho in sorted(PASTA_DADOS.glob("????-??-??.json"), reverse=True):
+    """Valor mais recente da série em coletas anteriores, com a data original.
+
+    Procura também em subpastas como data/testes/: Selic, IPCA e PTAX são dados públicos reais
+    em qualquer coleta. Só data/enviados/ fica de fora (são registros de envio, não coletas).
+    """
+    coletas = [c for c in PASTA_DADOS.rglob("????-??-??.json") if "enviados" not in c.parts]
+    for caminho in sorted(coletas, key=lambda c: c.stem, reverse=True):
         if caminho.stem >= hoje.isoformat():
             continue
         try:
@@ -293,11 +304,21 @@ def definir_status(pregao, ativos, erros, hoje):
     return "ok"
 
 
-def gravar_json(resultado, hoje):
-    PASTA_DADOS.mkdir(exist_ok=True)
-    caminho = PASTA_DADOS / f"{hoje.isoformat()}.json"
+def gravar_json(resultado, caminho):
+    caminho.parent.mkdir(parents=True, exist_ok=True)
     caminho.write_text(json.dumps(resultado, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return caminho
+
+
+def motivo_para_nao_gravar(pregao, agora):
+    """Por que esta coleta não deve virar data/<pregão>.json; None se deve."""
+    if pregao == agora.date() and agora.time() < FECHAMENTO_PREGAO:
+        return ("Pregão em andamento", f"a cotação mais recente é do pregão de hoje ({pregao:%d/%m}), ainda aberto. "
+                "Nada foi gravado: a coleta da manhã seguinte grava o fechamento.")
+    if ja_enviado(pregao.isoformat()):
+        return ("Pregão já processado", f"o pregão de {pregao:%d/%m} já foi coletado e enviado "
+                f"(data/enviados/{pregao}.json). Nada foi gravado: provável feriado ou coleta repetida.")
+    return None
 
 
 def main():
@@ -327,11 +348,22 @@ def main():
         "macro": macro,
         "erros": erros,
     }
-    caminho = gravar_json(resultado, hoje)
-    print(
-        f"Status: {resultado['status']} | ativos: {len(ativos)}/{len(tickers)} | índices: {len(indices)}/{len(INDICES)}"
-        f" | erros: {len(erros)} | arquivo: {caminho.relative_to(RAIZ)}"
-    )
+    contagem = f"ativos: {len(ativos)}/{len(tickers)} | índices: {len(indices)}/{len(INDICES)} | erros: {len(erros)}"
+
+    if pregao is None:  # nenhuma cotação: sem data de pregão, o arquivo vai para diagnóstico
+        caminho = gravar_json(resultado, PASTA_FALHAS / f"{hoje.isoformat()}.json")
+        aviso("Coleta sem cotações", f"nenhuma cotação obtida ({contagem}); detalhes em {caminho.relative_to(RAIZ)}.")
+        sys.exit(1)
+    motivo = motivo_para_nao_gravar(pregao, agora)
+    if motivo:
+        aviso(*motivo)
+        print(f"Status: não gravado | {contagem}")
+        return
+    caminho = PASTA_DADOS / f"{pregao.isoformat()}.json"
+    if caminho.exists():
+        aviso("Pregão já coletado", f"o pregão de {pregao:%d/%m} já tinha coleta, ainda não enviada: números atualizados.")
+    gravar_json(resultado, caminho)
+    print(f"Status: {resultado['status']} | pregão: {pregao.isoformat()} | {contagem} | arquivo: {caminho.relative_to(RAIZ)}")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,14 @@
 name: Envio da edição
 
 on:
-  # A tarefa do Claude commita edicao/AAAA-MM-DD.md (às vezes numa branch própria)
+  # A tarefa do Claude commita edicao/<pregão>.md (às vezes numa branch própria)
   push:
     paths:
       - "edicao/**"
-  # Fallback: se a edição do dia não existir, envia card + manchetes sem o texto
+  # Fallback: se a edição do pregão não existir, envia card + manchetes sem o texto.
+  # Minuto quebrado de propósito: em :00 e :30 o agendador do GitHub atrasa ou pula execuções.
   schedule:
-    - cron: "0 12 * * 1-5"  # 9h em Brasília (UTC-3), dias úteis
+    - cron: "13 12 * * 1-5"  # 9h13 em Brasília (UTC-3), dias úteis
   workflow_dispatch:
 
 permissions:
@@ -42,10 +43,17 @@ jobs:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           fetch-depth: 0
 
-      - name: Localizar a edição do dia
+      - name: Localizar a edição do pregão mais recente
         id: edicao
         run: |
-          ARQ="edicao/$(TZ=America/Sao_Paulo date +%F).md"
+          # Arquivos nomeados pela data do PREGÃO: o mais recente em data/ (subpastas ficam de fora)
+          ULTIMO=$(ls data/????-??-??.json 2>/dev/null | sort | tail -1)
+          if [ -z "$ULTIMO" ]; then
+            echo "::notice title=Sem coleta::nenhum pregão em data/."
+            echo "encontrada=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          ARQ="edicao/$(basename "$ULTIMO" .json).md"
+          echo "Pregão mais recente: $(basename "$ULTIMO" .json)"
           mkdir -p edicao
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             # Lê o arquivo do commit que recebeu o push (pode ser outra branch)
@@ -62,14 +70,16 @@ jobs:
               break
             fi
           done
-          if [ -f "$ARQ" ]; then echo "encontrada=true" >> "$GITHUB_OUTPUT"; echo "Edição do dia encontrada."
-          else echo "encontrada=false" >> "$GITHUB_OUTPUT"; echo "Edição do dia não encontrada."; fi
+          if [ -f "$ARQ" ]; then echo "encontrada=true" >> "$GITHUB_OUTPUT"; echo "Edição do pregão encontrada."
+          else echo "encontrada=false" >> "$GITHUB_OUTPUT"; echo "Edição do pregão não encontrada."; fi
 
       - name: Decidir se envia
         id: decisao
         run: |
-          # Push sem a edição de hoje (ex.: arquivo de outro dia) não envia: espera o fallback das 9h
+          # Push sem a edição do pregão mais recente (ex.: arquivo de outro pregão) não envia:
+          # espera o fallback das 9h13
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "${{ steps.edicao.outputs.encontrada }}" != "true" ]; then
+            echo "::notice title=Push sem edição do pregão::o push não trouxe a edição do pregão mais recente; o fallback das 9h13 envia."
             echo "enviar=false" >> "$GITHUB_OUTPUT"
           else
             echo "enviar=true" >> "$GITHUB_OUTPUT"

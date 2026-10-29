@@ -1,13 +1,14 @@
-"""Envia a edição do dia por DM no Discord, uma por usuário.
+"""Envia a edição do pregão mais recente por DM no Discord, uma por usuário.
 
-Para cada usuário (usuarios.py), nesta ordem:
+Arquivos nomeados pela data do PREGÃO. Para cada usuário (usuarios.py), nesta ordem:
   1. card com os números dos tickers dele (card.py);
-  2. só para quem tem texto_claude: true e se edicao/AAAA-MM-DD.md existir, o texto do Claude
+  2. só para quem tem texto_claude: true e se edicao/<pregão>.md existir, o texto do Claude
      ("Geral" + a seção do código dele);
-  3. destaques com manchetes e "Contexto do mercado" (data/AAAA-MM-DD-news.json, de news.py).
+  3. destaques com manchetes e "Contexto do mercado" (data/<pregão>-news.json, de news.py).
 
-Usa só a coleta DE HOJE (nunca reenvia um dia anterior). Quem já está em
-data/enviados/AAAA-MM-DD.json não recebe de novo. Falha em um usuário não impede os outros.
+Envia o pregão mais recente de data/, desde que não seja antigo (anterior ao último dia útil):
+se a coleta do dia não rodou, avisa no Actions em vez de mandar dados velhos. Quem já está em
+data/enviados/<pregão>.json não recebe de novo. Falha em um usuário não impede os outros.
 Logs só com contagens (privacidade).
 
     python notify.py --previa      gera tudo e mostra as mensagens, sem enviar nem registrar
@@ -21,14 +22,17 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from card import FUSO_BRT, PASTA_DADOS, carregar_json_do_dia, data_br, data_de_hoje, gerar_card, numero, pct
+from card import (
+    FUSO_BRT, PASTA_DADOS, aviso, carregar_pregao_mais_recente, data_br, data_de_hoje, gerar_card, numero, pct,
+)
+from collect import dia_util_anterior
 from discord_api import ErroDiscord, abrir_dm, criar_sessao, enviar_mensagem
-from news import buscar_noticias, ler_noticias_do_dia, noticias_vazias
+from news import buscar_noticias, ler_noticias_do_pregao, noticias_vazias
 from usuarios import carregar_usuarios, filtrar_para_usuario, todos_os_tickers
 
 RAIZ = Path(__file__).resolve().parent
@@ -43,16 +47,16 @@ UNIDADE_DE_TEXTO = re.compile(r"\[[^\]]*\]\([^)]*\)|\S+")
 
 # ---------- registro de envios ----------
 
-def ler_enviados(data):
-    """{codigo: {"enviado_em", "com_texto"}} de data/enviados/AAAA-MM-DD.json."""
-    caminho = PASTA_ENVIADOS / f"{data}.json"
+def ler_enviados(pregao):
+    """{codigo: {"enviado_em", "com_texto"}} de data/enviados/<pregão>.json."""
+    caminho = PASTA_ENVIADOS / f"{pregao}.json"
     return json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else {}
 
 
-def salvar_enviados(data, enviados):
+def salvar_enviados(pregao, enviados):
     PASTA_ENVIADOS.mkdir(parents=True, exist_ok=True)
     texto = json.dumps(enviados, ensure_ascii=False, indent=2, sort_keys=True)
-    (PASTA_ENVIADOS / f"{data}.json").write_text(texto + "\n", encoding="utf-8")
+    (PASTA_ENVIADOS / f"{pregao}.json").write_text(texto + "\n", encoding="utf-8")
 
 
 # ---------- notícias ----------
@@ -69,11 +73,11 @@ def noticias_do_usuario(noticias_do_dia, dia_usuario, usuario):
         return noticias_vazias(dia_usuario)
 
 
-# ---------- texto do Claude (edicao/AAAA-MM-DD.md) ----------
+# ---------- texto do Claude (edicao/<pregão>.md) ----------
 
-def ler_edicao(data):
-    """Seções do texto do dia: {"Geral": texto, "<codigo>": texto}. Vazio se não existir."""
-    caminho = PASTA_EDICAO / f"{data}.md"
+def ler_edicao(pregao):
+    """Seções do texto do pregão: {"Geral": texto, "<codigo>": texto}. Vazio se não existir."""
+    caminho = PASTA_EDICAO / f"{pregao}.md"
     if not caminho.exists():
         return {}
     secoes, atual = {}, None
@@ -249,16 +253,21 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")  # console do Windows não é UTF-8 por padrão
     args = ler_argumentos()
     load_dotenv(RAIZ / ".env")
-    hoje = data_de_hoje()
-    dia = carregar_json_do_dia(hoje)
+    dia = carregar_pregao_mais_recente()
+    pregao = dia["pregao"]
     usuarios = carregar_usuarios()
     todos = todos_os_tickers(usuarios)
-    noticias_do_dia, edicao, enviados = ler_noticias_do_dia(hoje), ler_edicao(hoje), ler_enviados(hoje)
+    noticias_do_dia, edicao, enviados = ler_noticias_do_pregao(pregao), ler_edicao(pregao), ler_enviados(pregao)
 
     token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
     enviar = not args.previa and bool(token)
     if not args.previa and not token:
         print("DISCORD_BOT_TOKEN não definido: nada será enviado.", file=sys.stderr)
+    # Pregão antigo = a coleta do dia não rodou: avisa em vez de mandar números velhos
+    if enviar and pregao < dia_util_anterior(date.fromisoformat(data_de_hoje())).isoformat():
+        aviso("Pregão antigo", f"o pregão mais recente em data/ é de {data_br(pregao)}; nada enviado. "
+              "A coleta de hoje rodou?")
+        return
     sessao = criar_sessao(token) if enviar else None
 
     contagem, falhas = Counter(), Counter()
@@ -266,7 +275,7 @@ def main():
         if not usuario["tickers"]:  # removeu tudo com /del: volta a receber depois de um /add
             contagem["sem ações"] += 1
             continue
-        if enviar and usuario["codigo"] in enviados:  # nunca enviar duas vezes no mesmo dia
+        if enviar and usuario["codigo"] in enviados:  # nunca enviar duas vezes o mesmo pregão
             contagem["já enviados"] += 1
             continue
         try:
@@ -279,7 +288,7 @@ def main():
                     "enviado_em": datetime.now(FUSO_BRT).replace(microsecond=0).isoformat(),
                     "com_texto": bool(texto),
                 }
-                salvar_enviados(hoje, enviados)  # a cada usuário: se cair no meio, ninguém recebe duas vezes
+                salvar_enviados(pregao, enviados)  # a cada usuário: se cair no meio, ninguém recebe duas vezes
                 contagem["enviados"] += 1
                 contagem["com texto do Claude"] += bool(texto)
             else:  # prévia local: aqui o conteúdo aparece, porque é para o dono conferir
@@ -291,7 +300,12 @@ def main():
             falhas[descrever_falha(erro)] += 1
 
     resumo = " | ".join(f"{nome}: {total}" for nome, total in contagem.items())
-    print(f"Usuários: {len(usuarios)} | {resumo} | edição do Claude: {'sim' if edicao else 'não'} | falhas: {sum(falhas.values())}")
+    print(
+        f"Pregão: {pregao} | usuários: {len(usuarios)} | {resumo} | edição do Claude: {'sim' if edicao else 'não'}"
+        f" | falhas: {sum(falhas.values())}"
+    )
+    if enviar and contagem["já enviados"] == len(usuarios) - contagem["sem ações"]:
+        aviso("Pregão já enviado", f"todos já receberam a edição do pregão de {data_br(pregao)}; nada enviado.")
     for motivo, total in falhas.items():
         print(f"  falha: {motivo} x{total}")
     if falhas or contagem["sem card"]:

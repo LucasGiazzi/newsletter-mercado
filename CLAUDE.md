@@ -14,39 +14,66 @@ Nada pessoal pode ficar fixo no código: usuários, discord_ids e tokens só em 
 ## Arquitetura
 
 ```
-[coleta.yml, dias úteis 7h30 BRT, repo privado]
+[coleta.yml, dias úteis 6h47 BRT, repo privado]
    comandos.py -> lê /add, /del, /list mandados na DM desde a última leitura
         └-> estado/preferencias.json  (listas atualizadas)
    collect.py  -> união dos tickers de todos os usuários (cada um buscado uma vez)
                   brapi (cotações do pregão anterior) + Banco Central SGS (Selic, IPCA, dólar)
-        └-> data/AAAA-MM-DD.json
+        └-> data/<pregão>.json  (não grava, e avisa, se o pregão estiver aberto ou já enviado)
    news.py     -> manchetes de cada usuário (por código) + contexto geral
-        └-> data/AAAA-MM-DD-news.json
+        └-> data/<pregão>-news.json
    commit dos três arquivos
 
 [Tarefa agendada do Claude, 8h, configurada fora do código; OPCIONAL]
-   segue prompts/narrativa.md: lê só os dois arquivos do dia, sem pesquisar na web
-        └-> edicao/AAAA-MM-DD.md  (commit + push, às vezes numa branch própria)
+   segue prompts/narrativa.md: pregão mais recente sem edição e sem envio, sem pesquisar na web
+        └-> edicao/<pregão>.md  (commit + push, às vezes numa branch própria)
 
 [envio.yml, repo privado]
-   dispara: push em edicao/** (qualquer branch) | 9h BRT (fallback) | manual
-   notify.py -> para cada usuário ainda não registrado em data/enviados/AAAA-MM-DD.json:
+   dispara: push em edicao/** (qualquer branch) | 9h13 BRT (fallback) | manual
+   notify.py -> pregão mais recente (recusa, com aviso, se for anterior ao último dia útil)
+                para cada usuário ainda não registrado em data/enviados/<pregão>.json:
                 card (só os tickers dele) + texto do Claude (se texto_claude e se houver edição)
                 + destaques com manchetes -> DM no Discord
-        └-> data/enviados/AAAA-MM-DD.json
+        └-> data/enviados/<pregão>.json
 ```
 
-Princípio: **API mede, notícia explica.** Todo número vem do JSON. As manchetes do `news.py` são só contexto relacionado: nunca são fonte de número. O texto do Claude só explica um movimento com link de uma manchete do arquivo do dia.
+Princípio: **API mede, notícia explica.** Todo número vem do JSON. As manchetes do `news.py` são só contexto relacionado: nunca são fonte de número. O texto do Claude só explica um movimento com link de uma manchete do arquivo do pregão.
+
+## Datas, nomes de arquivo e avisos
+
+**Convenção única (desde 29/10/2026): os arquivos de `data/` e `edicao/` são nomeados pela data do PREGÃO**, não pela data em que a coleta ou o envio rodaram. São eles `data/<pregão>.json`, `data/<pregão>-news.json`, `edicao/<pregão>.md` e `data/enviados/<pregão>.json`.
+- **"O pregão"** é sempre o arquivo `data/AAAA-MM-DD.json` mais recente **na própria pasta `data/`** (`carregar_pregao_mais_recente`; `ls data/????-??-??.json` nos workflows). Subpastas ficam de fora.
+- **Subpastas que não contam como pregão:**
+  - `data/testes/`, `edicao/testes/` e `data/enviados/testes/`: arquivos gerados em testes manuais, guardados para consulta;
+  - `data/falhas/`: coleta sem nenhuma cotação, só para diagnóstico.
+  Todas ficam no `.gitignore` do template. A única leitura que entra nelas é o "último valor conhecido" do Banco Central, porque Selic, IPCA e PTAX são dados reais em qualquer coleta.
+- **Por que mudou:** a coleta nomeava pela data de execução e o envio exigia "a coleta de hoje". Em 29/10/2026 a coleta agendada não rodou, e os arquivos de teste de 28/10, gerados à noite, confundiam a lógica de "já enviado".
+- **"Já processado" = já enviado** (`ja_enviado`: existe `data/enviados/<pregão>.json`).
+
+**Avisos no Actions (`aviso` em `card.py`):** situações em que o script termina sem fazer nada não podem passar em silêncio. No Actions, viram anotação `::notice` no resumo da execução; localmente, uma linha comum.
+
+| Onde | Aviso | Quando |
+|---|---|---|
+| `collect.py` | Pregão em andamento | a cotação mais recente é do pregão de hoje, antes das 18h30 (`FECHAMENTO_PREGAO`). Nada é gravado, para nunca sair "fechamento" com preço do meio do dia (ex.: coleta atrasada ou manual depois das 10h) |
+| `collect.py` | Pregão já processado | o pregão já foi enviado (feriado ou coleta repetida). Nada é gravado |
+| `collect.py` | Pregão já coletado | já havia coleta desse pregão, não enviada: os números são atualizados |
+| `collect.py` | Coleta sem cotações | nenhuma cotação: grava `data/falhas/<hoje>.json` e sai com código 1 |
+| `news.py` | Pregão já processado | o pregão mais recente já foi enviado: não busca manchetes |
+| `notify.py` | Pregão antigo | o pregão mais recente é anterior ao último dia útil (a coleta do dia não rodou): nada é enviado |
+| `notify.py` | Pregão já enviado | todos já receberam |
+| `envio.yml` | Push sem edição do pregão | o push não trouxe a edição do pregão mais recente: espera o fallback |
 
 ## Estrutura
 
 ```
-.github/workflows/coleta.yml   7h30: trava de privacidade -> comandos -> coleta -> manchetes -> commit
-.github/workflows/envio.yml    push em edicao/**, 9h ou manual: localiza a edição -> envio -> registro
-data/AAAA-MM-DD.json           números do pregão (no público: só .gitkeep; *.json ignorado)
-data/AAAA-MM-DD-news.json      manchetes por código de usuário + contexto geral (news.py)
-data/enviados/AAAA-MM-DD.json  quem já recebeu a edição do dia, por código (nunca enviar duas vezes)
-edicao/AAAA-MM-DD.md           texto do Claude: "## Geral" + "## <código>" (ignorado no público)
+.github/workflows/coleta.yml   6h47: trava de privacidade -> comandos -> coleta -> manchetes -> commit
+.github/workflows/envio.yml    push em edicao/**, 9h13 ou manual: localiza a edição -> envio -> registro
+data/<pregão>.json             números do pregão (no público: só .gitkeep; *.json ignorado)
+data/<pregão>-news.json        manchetes por código de usuário + contexto geral (news.py)
+data/enviados/<pregão>.json    quem já recebeu a edição desse pregão, por código (nunca enviar duas vezes)
+edicao/<pregão>.md             texto do Claude: "## Geral" + "## <código>" (ignorado no público)
+data/testes/, edicao/testes/, data/enviados/testes/   arquivos de testes manuais (não contam como pregão)
+data/falhas/<hoje>.json        coleta sem nenhuma cotação, só diagnóstico
 prompts/narrativa.md           instruções da tarefa agendada do Claude
 estado/preferencias.json       listas alteradas por comando, por código do usuário (ignorado no público)
 usuarios.py                    lê usuários de USUARIOS_YAML ou usuarios.yml + preferências
@@ -54,9 +81,9 @@ comandos.py                    aplica /add, /del, /list, /ajuda mandados na DM d
 discord_api.py                 API REST do Discord (abrir DM, enviar e ler mensagens)
 usuarios.example.yml           exemplo com dados fictícios (o real, usuarios.yml, fica fora do Git)
 collect.py                     coletor
-card.py                        gera out/card-AAAA-MM-DD[-<código>].png (Jinja2 + Playwright)
+card.py                        gera out/card-<pregão>[-<código>].png (Jinja2 + Playwright)
 templates/card.html            template do card
-news.py                        manchetes relacionadas -> data/AAAA-MM-DD-news.json
+news.py                        manchetes relacionadas -> data/<pregão>-news.json
 notify.py                      uma edição por usuário, por DM no Discord (--previa só gera e mostra)
 ativar_discord.py              ativação única do bot (conecta ao Gateway uma vez; usa websocket-client)
 out/                           cards gerados (fora do Git); <código> = hash curto do discord_id
@@ -73,8 +100,9 @@ requirements.txt               requests, python-dotenv, jinja2, playwright, pyya
 - **Um usuário não vê dados de outro.** Card, destaques, texto e erros de cada edição só citam os tickers dele (ver `filtrar_para_usuario`, em `usuarios.py`).
   - Arquivos em `out/`, manchetes, preferências, registro de envios e seções da edição são indexados por `codigo_do_usuario` (hash curto do discord_id), nunca pela posição na lista: se a ordem mudar, um usuário receberia dados de outro.
   - **Nenhum arquivo do repo tem nome de pessoa ou discord_id**: por isso as seções do texto do Claude são `## <código>`, e não `## <nome>`.
-- **Nunca enviar duas vezes no mesmo dia:** `notify.py` pula quem está em `data/enviados/AAAA-MM-DD.json` e grava o registro a cada usuário enviado. O `envio.yml` commita o registro mesmo se o envio falhar no meio, e push e fallback usam o mesmo grupo de execução.
-- **Nunca enviar dados de outro dia:** `notify.py` e `news.py` exigem a coleta de hoje (`carregar_json_do_dia`), nunca "o JSON mais recente".
+- **Nunca enviar duas vezes o mesmo pregão:** `notify.py` pula quem está em `data/enviados/<pregão>.json` e grava o registro a cada usuário enviado. O `envio.yml` commita o registro mesmo se o envio falhar no meio, e push e fallback usam o mesmo grupo de execução.
+- **Nunca enviar dados velhos:** `notify.py` envia o pregão mais recente de `data/` só se ele não for anterior ao último dia útil (`dia_util_anterior`). Se a coleta do dia não rodou, avisa "Pregão antigo" e não envia. Na segunda, o pregão de sexta é o esperado.
+- **Nunca gravar pregão aberto como fechamento:** `collect.py` não grava cotação do pregão de hoje antes das 18h30.
 - **Os workflows só processam dados em repositório privado.** Ele consulta a visibilidade pela API, porque em execuções agendadas (`schedule`) o `github.event` não traz `repository`. Não troque por `if: github.event.repository.private`, que deixaria a coleta agendada sem rodar.
 - Falha em um ticker não derruba a coleta: registra em `erros` e segue. Falha em um usuário não impede os outros.
 - O JSON é sempre gravado, mesmo com erros, para a edição poder avisar o que falhou.
@@ -117,7 +145,7 @@ O usuário manda, como mensagem comum na DM do bot, a qualquer hora:
 | `/list` | `lista` | só pede a lista (ela já vem em toda resposta) |
 | `/ajuda` | `help` | lista os comandos |
 
-- **Leitura uma vez por dia**, no `coleta.yml` às 7h30, antes da coleta. Custo zero; a newsletter é diária, então o que for pedido até as 7h30 já vale na edição da manhã, e o que vier depois vale na do dia útil seguinte. As mensagens ficam guardadas na DM, então nada se perde em fim de semana ou feriado.
+- **Leitura uma vez por dia**, no `coleta.yml` às 6h47, antes da coleta. Custo zero; a newsletter é diária, então o que for pedido até as 6h47 já vale na edição da manhã, e o que vier depois vale na do dia útil seguinte. As mensagens ficam guardadas na DM, então nada se perde em fim de semana ou feriado.
 - **Por que não são comandos de barra oficiais do Discord:** eles exigem resposta em 3 segundos, o que só um servidor ligado o tempo todo consegue (fere o custo zero). Por isso o bot lê o texto da DM. Em DMs com o bot, o conteúdo das mensagens vem sem o intent privilegiado de Message Content. **Não registre application commands**: o Discord passaria a interceptar `/add` como comando oficial, e sem resposta ele falha.
 - Para cada usuário cadastrado:
   1. Abre a DM.
@@ -190,7 +218,7 @@ Depois envia por DM, nesta ordem:
 1. **Mensagem com o card anexado** (`card.py`), arquivo `mercado-<pregão>.png`, legenda "Mercado B3 · fechamento de dd/mm/aaaa": só números do recorte. Ibovespa, dólar PTAX, Selic, IPCA e tabela dos ativos (fechamento, dia, semana, mês) ordenada pela variação do dia. O cabeçalho mostra "FECHAMENTO dd/mm/aaaa" com a data do `pregao`, não a da edição. Aviso no topo se `status` for `parcial` ou `sem_pregao`. Rodapé: "Dados: brapi e Banco Central | coletado em X | informativo, não é recomendação".
    - Visual de terminal financeiro: fundo escuro, números em fonte mono tabular alinhados à direita, verde (`#2cb5a0`) e vermelho (`#f0605d`) **só nas variações**, sempre com sinal +/−. O par foi validado para daltonismo e contraste. Sem gradientes.
    - Playwright/Chromium, viewport de 1080 px, `device_scale_factor=2`, screenshot só do `#card`. Sem recursos externos no template.
-2. **Texto do Claude**, só se o usuário tiver `texto_claude: true` **e** existir `edicao/AAAA-MM-DD.md` com a seção `## Geral` (ver "Texto do Claude" abaixo). Vai como "### Panorama do mercado" (a seção Geral) e "### Suas ações" (a seção `## <código>` dele, se houver), um parágrafo por bloco, com o título junto do primeiro parágrafo. O Markdown do Claude (`[título](url)`) é o nativo do Discord: não há conversão.
+2. **Texto do Claude**, só se o usuário tiver `texto_claude: true` **e** existir `edicao/<pregão>.md` com a seção `## Geral` (ver "Texto do Claude" abaixo). Vai como "### Panorama do mercado" (a seção Geral) e "### Suas ações" (a seção `## <código>` dele, se houver), um parágrafo por bloco, com o título junto do primeiro parágrafo. O Markdown do Claude (`[título](url)`) é o nativo do Discord: não há conversão.
 3. **Destaques** em Markdown do Discord, numa mensagem nova: "Destaques · fechamento de dd/mm", avisos de status, linha do Ibovespa e as 2 maiores altas e 2 maiores baixas **entre os ativos do usuário**:
    ```
    ▲ **WEGE3** +2,25%
@@ -201,7 +229,7 @@ Depois envia por DM, nesta ordem:
    - Fonte e tema passam por `escapar` (Markdown do Discord). O título, dentro de `[...]`, passa por `escapar_texto_de_link`, que não escapa `( ) # -`: dentro do texto de um link, o Discord mostraria a barra ("Bradesco \(BBDC4\)"). Só links `https`, com `)` e espaço codificados na URL.
    - Limite: **2000 caracteres por mensagem, contando as URLs** (os links do Google News têm até ~600 caracteres). `dividir_em_mensagens` junta blocos (parágrafo, cabeçalho, cada ativo, contexto, nota) até o limite. Bloco maior que o limite começa numa mensagem nova e é quebrado por linha, e linha maior que o limite é quebrada por palavra (`quebrar_linha`), **sem nunca cortar um link `[texto](url)` no meio**. Texto e destaques são divididos separadamente: os destaques sempre começam numa mensagem nova.
 
-As manchetes vêm de `data/AAAA-MM-DD-news.json` (gerado às 7h30); se o arquivo não tiver o usuário (rodando local, por exemplo), `notify.py` busca na hora.
+As manchetes vêm de `data/<pregão>-news.json` (gerado às 6h47); se o arquivo não tiver o usuário (rodando local, por exemplo), `notify.py` busca na hora.
 
 Falhas:
 - Notícias ou RSS com problema: a edição segue sem manchetes.
@@ -216,10 +244,13 @@ No `envio.yml`, o navegador é instalado com `python -m playwright install --wit
 
 ### Texto do Claude (módulo opcional)
 
-Uma **tarefa agendada do Claude**, configurada fora do código, roda às 8h com as instruções de `prompts/narrativa.md`. O módulo é opcional: sem a tarefa, ou se ela falhar, o fallback das 9h envia card + destaques para todos.
+Uma **tarefa agendada do Claude**, configurada fora do código, roda às 8h com as instruções de `prompts/narrativa.md`. O módulo é opcional: sem a tarefa, ou se ela falhar, o fallback das 9h13 envia card + destaques para todos.
 
-- **Entrada:** só `data/<data>.json` e `data/<data>-news.json`. Se um deles não existir, a tarefa para sem escrever nada. **Não pesquisa na web.**
-- **Saída `edicao/AAAA-MM-DD.md`:** reportagem curta, estilo jornal. `## Geral` (3 parágrafos) + `## <código>` (2 a 4 parágrafos, agrupando ativos por assunto) para cada usuário com `texto_claude: true` em `usuarios` do arquivo de notícias. Seções por código, nunca por nome. Links `[título](url)` copiados do arquivo de notícias.
+- **Qual pregão:** não calcula a data. Pega o `data/AAAA-MM-DD.json` mais recente da pasta `data/` (sem subpastas) e **para sem escrever nada** se faltar `data/<pregão>-news.json` ou se já existir `edicao/<pregão>.md` ou `data/enviados/<pregão>.json`.
+  - **Não volta para pregões mais antigos**, porque o envio só manda o mais recente; uma edição de pregão antigo gastaria tokens sem chegar a ninguém.
+  - Isso é mais estrito que "o mais recente sem edição", que foi a primeira formulação, em 29/10/2026.
+- **Entrada:** só `data/<pregão>.json` e `data/<pregão>-news.json`. **Não pesquisa na web.**
+- **Saída `edicao/<pregão>.md`:** reportagem curta, estilo jornal. `## Geral` (3 parágrafos) + `## <código>` (2 a 4 parágrafos, agrupando ativos por assunto) para cada usuário com `texto_claude: true` em `usuarios` do arquivo de notícias. Seções por código, nunca por nome. Links `[título](url)` copiados do arquivo de notícias.
 - **Regras do texto:**
   - **sem preços, pontos nem variações** (estão no card, que vem antes); a direção (subiu/caiu) vem do sinal no JSON. Outros números só se estiverem no título de uma manchete linkada. Decidido em 28/10/2026, depois do teste: o texto conta a história, o card traz os números;
   - todo "porquê" tem link de uma manchete do arquivo, atribuído à notícia; sem manchete, "sem notícia específica";
@@ -227,7 +258,7 @@ Uma **tarefa agendada do Claude**, configurada fora do código, roda às 8h com 
   - leitura de 2 a 3 minutos;
   - português do Brasil, sem travessões;
   - no máximo 2 links por parágrafo (limite do Discord).
-- **Commit:** `git add -f edicao/<data>.md` (a pasta é ignorada no template) e push, na branch principal ou numa branch própria.
+- **Commit:** `git add -f edicao/<pregão>.md` (a pasta é ignorada no template) e push, na branch principal ou numa branch própria.
 - `notify.py` lê as seções com `ler_edicao` (títulos `## `). A seção de um código só vai para o dono desse código, e só se `texto_claude` for `true`.
 - **Para mudar o texto, edite `prompts/narrativa.md`**, não o código. Se o formato de saída mudar (títulos das seções), ajuste `ler_edicao` e `blocos_do_texto`.
 
@@ -245,7 +276,7 @@ Uma **tarefa agendada do Claude**, configurada fora do código, roda às 8h com 
   - Sem `temas.yml` e sem temas do usuário, a busca é "Ibovespa", sem exigir citação.
   - Como o agrupamento de manchetes parecidas vale para a mensagem toda, o mesmo fato não aparece em dois temas.
 - **Seleção dos ativos:** só ativos com `dado_do_pregao`. Altas são as variações > 0 e baixas as < 0; num dia sem nenhuma alta, não há ▲.
-- **Janela de 24h:** às 7h30, cobre as notícias desde as 7h30 do dia anterior, incluindo o pregão e o pós-fechamento.
+- **Janela de 24h:** às 6h47, cobre as notícias desde as 6h47 do dia anterior, incluindo o pregão e o pós-fechamento.
 - **Escolha das manchetes:** até 2 por ativo e 1 por tema do contexto, na ordem do Google. Cada manchete passa por `motivo_descarte`, e **o primeiro motivo que se aplicar** é o registrado:
   1. `sem data` / `mais de 24h`: o `pubDate` é conferido de novo; o `when:1d` sozinho não basta.
   2. `fonte fora da lista`: a lista fica em **`fontes.txt`**. A fonte é aceita se o nome começar por um item da lista, sem diferenciar maiúsculas e acentos ("Valor" aceita "Valor Investe"). Sem o arquivo, não há filtro de fonte.
@@ -260,7 +291,7 @@ Uma **tarefa agendada do Claude**, configurada fora do código, roda às 8h com 
      - palavras-chave em comum ≥ 50% do título menor, com pelo menos 3 palavras.
      As palavras-chave são radicais de 4 letras ("Vamos" e "VAMO3" viram "vamo") e números sem separador ("5,34" vira "534"), sem palavras vazias. Fica a primeira manchete de cada fato.
 - Sem manchete válida para o ativo: "sem notícia específica". Isso é esperado com os filtros rígidos.
-- **Saída:** `python news.py` (no `coleta.yml`, depois do `collect.py`) grava `data/AAAA-MM-DD-news.json`, sem os descartes:
+- **Saída:** `python news.py` (no `coleta.yml`, depois do `collect.py`) grava `data/<pregão>-news.json`, sem os descartes:
   ```json
   {"data": "...", "pregao": "...",
    "contexto_geral": [{"titulo", "url", "fonte", "publicado", "tema"}],
@@ -292,7 +323,7 @@ O agente de narrativa depende deste formato. Mudanças aqui precisam ser intenci
 ```
 
 - `data`: dia da edição (e do nome do arquivo).
-- `pregao`: data do pregão de referência = data da cotação do Ibovespa (ou a mais recente entre os ativos, se o Ibovespa falhar). Às 7h30 é o pregão anterior.
+- `pregao`: data do pregão de referência = data da cotação do Ibovespa (ou a mais recente entre os ativos, se o Ibovespa falhar). Às 6h47 é o pregão anterior.
 - `macro.<série>.repetido` (opcional, `true`): o SGS falhou e o valor veio da última coleta que deu certo; `data` continua sendo a de referência original.
 
 `<ativo>`: `ticker`, `nome`, `preco`, `var_dia_pct` (variação no pregão de referência), `var_semana_pct` (vs. último fechamento da semana anterior), `var_mes_pct` (vs. último fechamento do mês anterior), `horario_cotacao`, `dado_do_pregao` (bool: a cotação é do `pregao`).
@@ -310,27 +341,30 @@ Variações de semana e mês seguem o **padrão de calendário da imprensa** (de
 - semana: preço atual vs. último fechamento do histórico **antes da segunda-feira** da semana da cotação (normalmente a sexta anterior);
 - mês: preço atual vs. último fechamento **antes do dia 1º** do mês da cotação (último pregão do mês anterior).
 
-A referência é a data da cotação (`horario_cotacao`), não o relógio: às 7h30, é o pregão anterior. Como só entram pontos anteriores à segunda-feira ou ao dia 1º, não importa se o histórico já traz o pregão do dia. O histórico de 3 meses cobre os dois casos.
+A referência é a data da cotação (`horario_cotacao`), não o relógio: às 6h47, é o pregão anterior. Como só entram pontos anteriores à segunda-feira ou ao dia 1º, não importa se o histórico já traz o pregão do dia. O histórico de 3 meses cobre os dois casos.
 
 ## GitHub Actions
 
 Os dois workflows começam pelo job `visibilidade` (`gh api repos/$GITHUB_REPOSITORY --jq .private`). O resto só roda se o resultado for `true`.
 
-**`coleta.yml`**: dias úteis às 7h30 BRT (`30 10 * * 1-5`) e `workflow_dispatch`.
+**`coleta.yml`**: dias úteis às 6h47 BRT (`47 9 * * 1-5`) e `workflow_dispatch`.
 1. Python 3.12, sem Chromium.
 2. `comandos.py` (`continue-on-error`).
-3. `collect.py`.
+3. `collect.py`, que grava `data/<pregão>.json` ou avisa por que não gravou.
 4. `news.py` (`continue-on-error`: sem manchetes, o envio ainda manda o card).
-5. `git add -f data/*.json estado/preferencias.json`, commit e push. **Não envia nada.**
+5. `git add -f data/*.json estado/preferencias.json`, commit "Coleta do pregão AAAA-MM-DD" e push. **Não envia nada.**
 
-**`envio.yml`**: dispara em três casos, no grupo de execução `envio` (nunca dois ao mesmo tempo):
-- **push em `edicao/**` em qualquer branch:** lê `edicao/<hoje>.md` do commit que recebeu o push (`git show $GITHUB_SHA:...`). **Só envia se a edição de hoje estiver nesse commit**; senão, espera o fallback. Pushes feitos com o `GITHUB_TOKEN` não disparam workflows; os da tarefa do Claude, com credencial própria, disparam.
-- **9h BRT (`0 12 * * 1-5`), o fallback:** procura `edicao/<hoje>.md` em todas as branches, da mais recente para a mais antiga. Se achar, envia com texto; se não, envia card + destaques.
+**`envio.yml`**: dispara em três casos, no grupo de execução `envio` (nunca dois ao mesmo tempo). O pregão é o `data/AAAA-MM-DD.json` mais recente da branch principal.
+- **push em `edicao/**` em qualquer branch:** lê `edicao/<pregão>.md` do commit que recebeu o push (`git show $GITHUB_SHA:...`). **Só envia se a edição do pregão mais recente estiver nesse commit**; senão, avisa e espera o fallback. Pushes feitos com o `GITHUB_TOKEN` não disparam workflows; os da tarefa do Claude, com credencial própria, disparam.
+- **9h13 BRT (`13 12 * * 1-5`), o fallback:** procura `edicao/<pregão>.md` em todas as branches, da mais recente para a mais antiga. Se achar, envia com texto; se não, envia card + destaques.
 - **`workflow_dispatch`:** igual ao fallback.
 
-Em todos os casos, o código, `data/` e `data/enviados/` vêm da branch principal (`checkout` com `ref` = branch padrão). Antes do `notify.py`, o passo "Atualizar os dados do dia" faz `git pull --ff-only`: a instalação do Chromium leva ~2,5 min, e em 28/10/2026 um envio manual disparado durante a coleta não achou o JSON do dia. Depois do `notify.py`, o passo "Registrar os envios" roda com `if: always()`: commita `data/enviados/`, faz `pull --rebase` e push. Quem já recebeu nunca recebe de novo, mesmo se a tarefa do Claude atrasar além das 9h.
+Em todos os casos, o código, `data/` e `data/enviados/` vêm da branch principal (`checkout` com `ref` = branch padrão). Antes do `notify.py`, o passo "Atualizar os dados do dia" faz `git pull --ff-only`: a instalação do Chromium leva ~2,5 min, e em 28/10/2026 um envio manual disparado durante a coleta não achou o JSON do dia. Depois do `notify.py`, o passo "Registrar os envios" roda com `if: always()`: commita `data/enviados/`, faz `pull --rebase` e push. Quem já recebeu nunca recebe de novo, mesmo se a tarefa do Claude atrasar além das 9h13.
 
-**Horários:** o agendamento do GitHub pode atrasar de 5 a 30 minutos. Se a coleta das 7h30 atrasar além das 8h, a tarefa do Claude não acha os arquivos e para, e o fallback das 9h envia sem texto. Se isso for comum, agende a tarefa para 8h15 ou 8h30.
+**Horários (desde 29/10/2026): coleta 6h47, tarefa do Claude 8h, fallback 9h13.**
+- **Minutos quebrados de propósito:** o agendador do GitHub concentra carga nas horas cheias e meias (:00, :30), quando atrasa ou até pula execuções. Em 29/10/2026 a coleta das 7h30 não rodou.
+- **Folga:** a coleta tem mais de 1 hora até a tarefa do Claude e mais de 3 horas até a bolsa abrir (10h).
+- **Se a coleta atrasar além das 10h,** o `collect.py` vê o pregão de hoje aberto, não grava nada e avisa "Pregão em andamento". O envio então recusa o pregão antigo, com aviso "Pregão antigo". Nesse dia não sai edição, mas nunca sai uma edição com números errados.
 
 Secrets do repo privado: `BRAPI_TOKEN`, `DISCORD_BOT_TOKEN`, `USUARIOS_YAML` (o conteúdo inteiro do YAML). A tarefa do Claude precisa de permissão de push no repo privado (fora do código).
 
@@ -348,8 +382,8 @@ Secrets do repo privado: `BRAPI_TOKEN`, `DISCORD_BOT_TOKEN`, `USUARIOS_YAML` (o 
 2. [x] Repositório e estrutura
 3. [x] `collect.py`
 4. [x] Rodar local e validar números
-5. [ ] GitHub Actions: `coleta.yml` (7h30) e `envio.yml` (push/9h) escritos; falta cadastrar os Secrets no repo privado e acompanhar a primeira execução
-6. [ ] Texto do Claude: `prompts/narrativa.md` e o envio prontos; falta configurar a tarefa agendada das 8h (fora do código) com permissão de push
+5. [x] GitHub Actions: Secrets cadastrados; `coleta.yml` (6h47) e `envio.yml` (push/9h13). A primeira edição automática (29/10) falhou porque a coleta agendada não rodou; daí os nomes pela data do pregão e os horários fora dos picos
+6. [x] Texto do Claude: tarefa agendada (rotina do claude.ai, Haiku, 8h, sem web, sem conectores), testada de ponta a ponta em 28/10 (escreveu, commitou e deu push na main)
 7. [ ] README do template (repo privado próprio ou entrar como usuário no prod; `usuarios.example.yml`)
 
 Evoluções depois da v1: juros futuros (DI) como termômetro de risco, variação no ano com os JSONs acumulados, edição semanal.
