@@ -7,11 +7,13 @@
 # tickers: ativos da B3 que entram no card e nos destaques dessa pessoa.
 # temas: assuntos que entram primeiro no "Contexto do mercado" (opcional).
 #   Pode ser o nome de um motor de temas.yml (ex.: Juros) ou um assunto livre (ex.: eleição).
+# texto_claude: true recebe também o texto escrito pela tarefa do Claude (opcional; padrão false).
 usuarios:
   - nome: Ana
     discord_id: "111111111111111111"
     tickers: [PETR4, VALE3, ITUB4]
     temas: [Juros, petróleo]
+    texto_claude: true
   - nome: Bruno
     discord_id: "222222222222222222"
     tickers: [WEGE3, MGLU3, B3SA3]

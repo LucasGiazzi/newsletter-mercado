@@ -1,9 +1,10 @@
 """Busca manchetes relacionadas no Google News (RSS em pt-BR, últimas 24h).
 
-Para as 2 maiores altas e as 2 maiores baixas do dia entre os ativos recebidos e para o
-"Contexto do mercado" (temas do usuário primeiro, depois os motores de temas.yml mais em
-pauta no dia). São notícias relacionadas,
-não a causa do movimento. Cada descarte fica registrado com o motivo.
+Para as 2 maiores altas e as 2 maiores baixas do pregão entre os ativos de cada usuário e
+para o "Contexto do mercado" (temas do usuário primeiro, depois os motores de temas.yml
+mais em pauta no dia). São notícias relacionadas, não a causa do movimento.
+`python news.py` (Actions, 7h30, depois da coleta) grava data/AAAA-MM-DD-news.json com as
+manchetes de todos os usuários, por código, e o contexto geral.
 Logs só com contagens, nunca consultas ou tickers (privacidade).
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
 """
@@ -14,7 +15,6 @@ import sys
 import time
 import unicodedata
 import xml.etree.ElementTree as ET
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
@@ -23,10 +23,10 @@ from pathlib import Path
 import requests
 import yaml
 
-from card import carregar_ultimo_json
+from card import PASTA_DADOS, carregar_json_do_dia, data_de_hoje
+from usuarios import carregar_usuarios, filtrar_para_usuario, todos_os_tickers
 
 RAIZ = Path(__file__).resolve().parent
-PASTA_SAIDA = RAIZ / "out"
 ARQUIVO_FONTES = RAIZ / "fontes.txt"
 ARQUIVO_TEMAS = RAIZ / "temas.yml"
 
@@ -269,10 +269,10 @@ def fila_de_contexto(temas, motores, filtros):
 # ---------- seleção dos ativos ----------
 
 def maiores_movimentos(ativos):
-    """2 maiores altas e 2 maiores baixas do dia, só com cotação de hoje."""
-    de_hoje = [a for a in ativos if a["dado_de_hoje"] and a["var_dia_pct"] is not None]
-    altas = sorted((a for a in de_hoje if a["var_dia_pct"] > 0), key=lambda a: -a["var_dia_pct"])
-    baixas = sorted((a for a in de_hoje if a["var_dia_pct"] < 0), key=lambda a: a["var_dia_pct"])
+    """2 maiores altas e 2 maiores baixas do pregão, só com cotação do pregão de referência."""
+    do_pregao = [a for a in ativos if a["dado_do_pregao"] and a["var_dia_pct"] is not None]
+    altas = sorted((a for a in do_pregao if a["var_dia_pct"] > 0), key=lambda a: -a["var_dia_pct"])
+    baixas = sorted((a for a in do_pregao if a["var_dia_pct"] < 0), key=lambda a: a["var_dia_pct"])
     return altas[:ATIVOS_POR_LADO] + baixas[:ATIVOS_POR_LADO]
 
 
@@ -312,24 +312,53 @@ def buscar_noticias(dia, temas=()):
     return {"data": dia["data"], "movimentos": movimentos, "contexto": contexto, "descartes": descartes}
 
 
-# ---------- saída ----------
+# ---------- arquivo do dia ----------
 
-def salvar_noticias(noticias, sufixo=""):
-    PASTA_SAIDA.mkdir(exist_ok=True)
-    caminho = PASTA_SAIDA / f"noticias-{noticias['data']}{sufixo}.json"
-    caminho.write_text(json.dumps(noticias, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return caminho
+def caminho_noticias_do_dia(data):
+    return PASTA_DADOS / f"{data}-news.json"
+
+
+def ler_noticias_do_dia(data):
+    """data/AAAA-MM-DD-news.json, ou {} se ainda não existir."""
+    caminho = caminho_noticias_do_dia(data)
+    return json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else {}
+
+
+def gerar_noticias_do_dia(dia, usuarios):
+    """Manchetes de cada usuário (por código) + contexto geral para a parte "Geral" do texto.
+
+    É o que a tarefa do Claude lê às 8h e o que o envio usa; os descartes ficam de fora.
+    """
+    todos = todos_os_tickers(usuarios)
+    geral = buscar_noticias({**dia, "ativos": []})["contexto"]  # só os motores de temas.yml
+    por_usuario = {}
+    for usuario in usuarios:
+        if not usuario["tickers"]:
+            continue
+        noticias = buscar_noticias(filtrar_para_usuario(dia, usuario, todos), usuario["temas"])
+        por_usuario[usuario["codigo"]] = {
+            "texto_claude": usuario["texto_claude"],
+            "tickers": usuario["tickers"],
+            "movimentos": noticias["movimentos"],
+            "contexto": noticias["contexto"],
+        }
+    return {"data": dia["data"], "pregao": dia.get("pregao"), "contexto_geral": geral, "usuarios": por_usuario}
 
 
 def main():
-    """Diagnóstico: notícias para todos os ativos do JSON, sem temas. Só contagens no terminal."""
+    """Gera data/AAAA-MM-DD-news.json para a coleta de hoje. Só contagens no terminal."""
     sys.stdout.reconfigure(encoding="utf-8")  # console do Windows não é UTF-8 por padrão
-    noticias = buscar_noticias(carregar_ultimo_json())
-    aceitas = sum(len(m["noticias"]) for m in noticias["movimentos"])
-    print(f"Ativos com destaque: {len(noticias['movimentos'])} | manchetes: {aceitas} | contexto: {len(noticias['contexto'])}")
-    for motivo, total in Counter(d["motivo"] for d in noticias["descartes"]).most_common():
-        print(f"  descarte: {motivo} x{total}")
-    print(f"Detalhes em {salvar_noticias(noticias)}")
+    dia = carregar_json_do_dia(data_de_hoje())
+    noticias = gerar_noticias_do_dia(dia, carregar_usuarios())
+    caminho = caminho_noticias_do_dia(dia["data"])
+    caminho.write_text(json.dumps(noticias, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    usuarios = noticias["usuarios"].values()
+    manchetes = sum(len(m["noticias"]) for u in usuarios for m in u["movimentos"])
+    print(
+        f"Usuários: {len(noticias['usuarios'])} | com texto do Claude: {sum(u['texto_claude'] for u in usuarios)}"
+        f" | manchetes de ativos: {manchetes} | contexto geral: {len(noticias['contexto_geral'])}"
+        f" | arquivo: {caminho.relative_to(RAIZ)}"
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,108 @@
+name: Envio da edição
+
+on:
+  # A tarefa do Claude commita edicao/AAAA-MM-DD.md (às vezes numa branch própria)
+  push:
+    paths:
+      - "edicao/**"
+  # Fallback: se a edição do dia não existir, envia card + manchetes sem o texto
+  schedule:
+    - cron: "0 12 * * 1-5"  # 9h em Brasília (UTC-3), dias úteis
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: envio  # push e fallback nunca rodam juntos: o segundo vê o registro do primeiro
+  cancel-in-progress: false
+
+jobs:
+  # Trava de privacidade: em eventos "schedule" o github.event não traz o repositório,
+  # então github.event.repository.private viria vazio. A visibilidade é consultada na API.
+  visibilidade:
+    runs-on: ubuntu-latest
+    outputs:
+      privado: ${{ steps.consulta.outputs.privado }}
+    steps:
+      - id: consulta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "privado=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" >> "$GITHUB_OUTPUT"
+
+  envio:
+    needs: visibilidade
+    if: needs.visibilidade.outputs.privado == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Código, dados do dia e registro de envios vêm sempre da branch principal
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          fetch-depth: 0
+
+      - name: Localizar a edição do dia
+        id: edicao
+        run: |
+          ARQ="edicao/$(TZ=America/Sao_Paulo date +%F).md"
+          mkdir -p edicao
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # Lê o arquivo do commit que recebeu o push (pode ser outra branch)
+            git fetch --quiet origin "$GITHUB_SHA"
+            REFS="$GITHUB_SHA"
+          else
+            # Fallback/manual: procura em todas as branches, da mais recente para a mais antiga
+            git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+            REFS=$(git for-each-ref --sort=-committerdate --format='%(refname)' refs/remotes/origin)
+          fi
+          for REF in $REFS; do
+            if git cat-file -e "$REF:$ARQ" 2>/dev/null; then
+              git show "$REF:$ARQ" > "$ARQ"
+              break
+            fi
+          done
+          if [ -f "$ARQ" ]; then echo "encontrada=true" >> "$GITHUB_OUTPUT"; echo "Edição do dia encontrada."
+          else echo "encontrada=false" >> "$GITHUB_OUTPUT"; echo "Edição do dia não encontrada."; fi
+
+      - name: Decidir se envia
+        id: decisao
+        run: |
+          # Push sem a edição de hoje (ex.: arquivo de outro dia) não envia: espera o fallback das 9h
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "${{ steps.edicao.outputs.encontrada }}" != "true" ]; then
+            echo "enviar=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enviar=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.decisao.outputs.enviar == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        if: steps.decisao.outputs.enviar == 'true'
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Enviar por DM no Discord
+        if: steps.decisao.outputs.enviar == 'true'
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          USUARIOS_YAML: ${{ secrets.USUARIOS_YAML }}
+        run: python notify.py
+
+      - name: Registrar os envios
+        # Sempre que tentou enviar, mesmo com falha parcial: quem recebeu não recebe de novo
+        if: always() && steps.decisao.outputs.enviar == 'true'
+        run: |
+          if ls data/enviados/*.json >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -f data/enviados/
+            git diff --cached --quiet || git commit -m "Envios $(TZ=America/Sao_Paulo date +%F)"
+            git pull --rebase --quiet
+            git push
+          fi

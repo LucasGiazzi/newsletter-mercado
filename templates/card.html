@@ -43,6 +43,7 @@
   }
   header h1 { font-size: 30px; font-weight: 600; letter-spacing: 0.2em; }
   header .num { font-size: 30px; color: var(--apagado); }
+  header .num small { font-family: var(--sans); font-size: 20px; letter-spacing: 0.14em; text-transform: uppercase; margin-right: 8px; }
 
   .aviso {
     margin-top: 28px;
@@ -117,14 +118,14 @@
 <div id="card">
   <header>
     <h1>MERCADO B3</h1>
-    <span class="num">{{ data_br }}</span>
+    <span class="num"><small>fechamento</small> {{ data_br }}</span>
   </header>
 
   {% if dia.status == "sem_pregao" %}
-  <div class="aviso"><strong>SEM PREGÃO HOJE</strong> · valores do último pregão disponível</div>
+  <div class="aviso"><strong>SEM PREGÃO NO ÚLTIMO DIA ÚTIL</strong> · valores do último pregão disponível</div>
   {% elif dia.status == "parcial" %}
   <div class="aviso">
-    <strong>COLETA PARCIAL</strong> · alguns dados faltam ou não são de hoje
+    <strong>COLETA PARCIAL</strong> · alguns dados faltam ou não são do último pregão
     {% if dia.erros %}<ul>{% for erro in dia.erros %}<li>{{ erro }}</li>{% endfor %}</ul>{% endif %}
   </div>
   {% endif %}
@@ -176,7 +177,7 @@
       {% for ativo in ativos %}
       <tr>
         <td class="ativo">
-          <span class="ticker">{{ ativo.ticker }}</span>{% if not ativo.dado_de_hoje %}<span class="sem-hoje">sem dado de hoje</span>{% endif %}
+          <span class="ticker">{{ ativo.ticker }}</span>{% if not ativo.dado_do_pregao %}<span class="sem-hoje">sem dado do pregão</span>{% endif %}
           <span class="nome">{{ ativo.nome }}</span>
         </td>
         <td class="preco num">{{ ativo.preco | numero }}</td>

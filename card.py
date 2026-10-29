@@ -7,7 +7,7 @@ Projeto informativo: não é recomendação de compra, venda ou manutenção de 
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -21,12 +21,27 @@ PASTA_SAIDA = RAIZ / "out"
 LARGURA = 1080
 ESCALA = 2  # device_scale_factor: imagem final com 2160 px de largura
 MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+# Brasil sem horário de verão desde 2019: UTC-3 fixo evita depender do pacote tzdata no Windows
+FUSO_BRT = timezone(timedelta(hours=-3))
 
 
 # ---------- entrada ----------
 
+def data_de_hoje():
+    """'AAAA-MM-DD' de hoje em Brasília: data da edição e nome dos arquivos do dia."""
+    return datetime.now(FUSO_BRT).date().isoformat()
+
+
+def carregar_json_do_dia(data):
+    """JSON da coleta da data pedida. Nunca cai para um dia anterior: reenviaria dados velhos."""
+    caminho = PASTA_DADOS / f"{data}.json"
+    if not caminho.exists():
+        raise SystemExit(f"Coleta de {data} não encontrada em data/; rode collect.py antes.")
+    return json.loads(caminho.read_text(encoding="utf-8"))
+
+
 def carregar_ultimo_json():
-    """JSON mais recente de data/ (o nome AAAA-MM-DD já ordena por data)."""
+    """JSON mais recente de data/ (o nome AAAA-MM-DD já ordena por data). Só para diagnóstico."""
     arquivos = sorted(PASTA_DADOS.glob("????-??-??.json"))
     if not arquivos:
         raise SystemExit("Nenhum JSON em data/; rode collect.py antes.")
@@ -89,7 +104,7 @@ def renderizar_html(dia):
     return ambiente.get_template("card.html").render(
         dia=dia,
         ativos=ordenar_por_dia(dia["ativos"]),
-        data_br=data_br(dia["data"]),
+        data_br=data_br(dia.get("pregao") or dia["data"]),  # o card mostra o pregão, não a data da edição
         coletado_br=coletado.strftime("%d/%m/%Y %H:%M"),
     )
 

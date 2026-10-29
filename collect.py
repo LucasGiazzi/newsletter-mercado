@@ -150,8 +150,8 @@ def ultimo_fechamento_antes(historico, limite):
     return anteriores[-1] if anteriores else None
 
 
-def montar_ativo(sessao, ticker, hoje):
-    """Junta cotação e histórico no formato <ativo> do contrato."""
+def montar_ativo(sessao, ticker):
+    """Junta cotação e histórico no formato <ativo> do contrato (dado_do_pregao entra depois)."""
     cotacao = buscar_cotacao(sessao, ticker)
     preco = cotacao.get("regularMarketPrice")
     horario_txt = cotacao.get("regularMarketTime")
@@ -160,7 +160,7 @@ def montar_ativo(sessao, ticker, hoje):
     horario = converter_horario(horario_txt)
 
     historico = buscar_historico(sessao, ticker)
-    # Referência é a data da cotação: em dia útil é hoje; em feriado, o último pregão
+    # Referência é a data da cotação (o pregão), não o relógio: às 7h30, é o pregão anterior
     data_ref = horario.date()
     # Padrão de calendário da imprensa: vs. último fechamento da semana e do mês anteriores
     fim_semana_anterior = ultimo_fechamento_antes(historico, data_ref - timedelta(days=data_ref.weekday()))
@@ -175,16 +175,15 @@ def montar_ativo(sessao, ticker, hoje):
         "var_semana_pct": variacao_pct(preco, fim_semana_anterior),
         "var_mes_pct": variacao_pct(preco, fim_mes_anterior),
         "horario_cotacao": horario.isoformat(),
-        "dado_de_hoje": horario.date() == hoje,
     }
 
 
-def coletar_ativos(sessao, tickers, hoje, erros):
+def coletar_ativos(sessao, tickers, erros):
     """Coleta cada ticker; falha em um não interrompe os demais. O detalhe vai só para o JSON."""
     ativos = []
     for ticker in tickers:
         try:
-            ativos.append(montar_ativo(sessao, ticker, hoje))
+            ativos.append(montar_ativo(sessao, ticker))
         except (ErroColeta, KeyError, TypeError, ValueError) as erro:
             erros.append(f"{ticker}: {erro}")
     return ativos
@@ -222,11 +221,33 @@ def coletar_macro(erros):
 
 # ---------- saída ----------
 
-def definir_status(indices, ativos, erros):
+def data_da_cotacao(ativo):
+    return datetime.fromisoformat(ativo["horario_cotacao"]).date()
+
+
+def definir_pregao(indices, ativos):
+    """Pregão de referência: a data da cotação do Ibovespa (ou a mais recente, se ele falhar)."""
     ibov = next((i for i in indices if i["ticker"] == "^BVSP"), None)
-    if ibov is not None and not ibov["dado_de_hoje"]:
+    if ibov is not None:
+        return data_da_cotacao(ibov)
+    datas = [data_da_cotacao(a) for a in ativos]
+    return max(datas) if datas else None
+
+
+def dia_util_anterior(hoje):
+    """Último dia de semana antes de hoje (feriados não entram: quem os revela é o Ibovespa)."""
+    dia = hoje - timedelta(days=1)
+    while dia.weekday() >= 5:
+        dia -= timedelta(days=1)
+    return dia
+
+
+def definir_status(pregao, ativos, erros, hoje):
+    """sem_pregao: o pregão de referência é anterior ao último dia útil (houve feriado).
+    parcial: há erros ou ativo cuja cotação não é do pregão de referência. ok: o resto."""
+    if pregao is not None and pregao < dia_util_anterior(hoje):
         return "sem_pregao"
-    if erros or any(not a["dado_de_hoje"] for a in ativos):
+    if erros or any(not a["dado_do_pregao"] for a in ativos):
         return "parcial"
     return "ok"
 
@@ -247,14 +268,19 @@ def main():
     tickers = todos_os_tickers(carregar_usuarios())
 
     sessao = criar_sessao_brapi()
-    indices = coletar_ativos(sessao, INDICES, hoje, erros)
-    ativos = coletar_ativos(sessao, tickers, hoje, erros)
+    indices = coletar_ativos(sessao, INDICES, erros)
+    ativos = coletar_ativos(sessao, tickers, erros)
     macro = coletar_macro(erros)
+
+    pregao = definir_pregao(indices, ativos)
+    for ativo in indices + ativos:
+        ativo["dado_do_pregao"] = data_da_cotacao(ativo) == pregao
 
     resultado = {
         "data": hoje.isoformat(),
+        "pregao": pregao.isoformat() if pregao else None,
         "coletado_em": agora.replace(microsecond=0).isoformat(),
-        "status": definir_status(indices, ativos, erros),
+        "status": definir_status(pregao, ativos, erros, hoje),
         "indices": indices,
         "ativos": ativos,
         "macro": macro,
