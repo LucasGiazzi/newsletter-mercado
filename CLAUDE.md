@@ -191,7 +191,7 @@ Depois envia por DM, nesta ordem:
    ```
    - Sem manchete: "sem notícia específica"; busca com falha: "notícias indisponíveis".
    - Depois vem "Contexto do mercado", com uma manchete por tema e o rótulo do tema (`- **Juros** · [Manchete](<link>) (fonte)`). No fim, uma nota em texto pequeno (`-# `) diz que as manchetes são **relacionadas, não a causa**. O texto nunca afirma causalidade.
-   - Título, fonte e tema passam por `escapar` (Markdown do Discord). Só links `https`, com `)` e espaço codificados na URL.
+   - Fonte e tema passam por `escapar` (Markdown do Discord). O título, dentro de `[...]`, passa por `escapar_texto_de_link`, que não escapa `( ) # -`: dentro do texto de um link, o Discord mostraria a barra ("Bradesco \(BBDC4\)"). Só links `https`, com `)` e espaço codificados na URL.
    - Limite: **2000 caracteres por mensagem, contando as URLs** (os links do Google News têm até ~600 caracteres). `dividir_em_mensagens` junta blocos (parágrafo, cabeçalho, cada ativo, contexto, nota) até o limite. Bloco maior que o limite começa numa mensagem nova e é quebrado por linha, e linha maior que o limite é quebrada por palavra (`quebrar_linha`), **sem nunca cortar um link `[texto](url)` no meio**. Texto e destaques são divididos separadamente: os destaques sempre começam numa mensagem nova.
 
 As manchetes vêm de `data/AAAA-MM-DD-news.json` (gerado às 7h30); se o arquivo não tiver o usuário (rodando local, por exemplo), `notify.py` busca na hora.
@@ -212,9 +212,9 @@ No `envio.yml`, o navegador é instalado com `python -m playwright install --wit
 Uma **tarefa agendada do Claude**, configurada fora do código, roda às 8h com as instruções de `prompts/narrativa.md`. O módulo é opcional: sem a tarefa, ou se ela falhar, o fallback das 9h envia card + destaques para todos.
 
 - **Entrada:** só `data/<data>.json` e `data/<data>-news.json`. Se um deles não existir, a tarefa para sem escrever nada. **Não pesquisa na web.**
-- **Saída `edicao/AAAA-MM-DD.md`:** `## Geral` (2 a 3 parágrafos) + `## <código>` (1 parágrafo) para cada usuário com `texto_claude: true` em `usuarios` do arquivo de notícias. Seções por código, nunca por nome. Links `[título](url)` copiados do arquivo de notícias.
+- **Saída `edicao/AAAA-MM-DD.md`:** reportagem curta, estilo jornal. `## Geral` (3 parágrafos) + `## <código>` (2 a 4 parágrafos, agrupando ativos por assunto) para cada usuário com `texto_claude: true` em `usuarios` do arquivo de notícias. Seções por código, nunca por nome. Links `[título](url)` copiados do arquivo de notícias.
 - **Regras do texto:**
-  - todo número vem do JSON;
+  - **sem preços, pontos nem variações** (estão no card, que vem antes); a direção (subiu/caiu) vem do sinal no JSON. Outros números só se estiverem no título de uma manchete linkada. Decidido em 28/10/2026, depois do teste: o texto conta a história, o card traz os números;
   - todo "porquê" tem link de uma manchete do arquivo, atribuído à notícia; sem manchete, "sem notícia específica";
   - fatos, sem opinião nem recomendação;
   - leitura de 2 a 3 minutos;

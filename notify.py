@@ -112,11 +112,16 @@ def escapar(texto):
     return re.sub(r"([\\*_~`|>\[\]()#-])", r"\\\1", texto)
 
 
+def escapar_texto_de_link(texto):
+    """Dentro de [texto](url) o Discord mostra a barra antes de ( ) # -: escapa só o que quebra o link."""
+    return re.sub(r"([\\*_~`|\[\]])", r"\\\1", texto)
+
+
 def linha_manchete(manchete):
     url = manchete["url"].replace(")", "%29").replace(" ", "%20")
     tema = f"**{escapar(manchete['tema'])}** · " if manchete.get("tema") else ""
     fonte = f" ({escapar(manchete['fonte'])})" if manchete.get("fonte") else ""
-    return f"- {tema}[{escapar(manchete['titulo'])}](<{url}>){fonte}"
+    return f"- {tema}[{escapar_texto_de_link(manchete['titulo'])}](<{url}>){fonte}"
 
 
 def bloco_movimento(mov):
