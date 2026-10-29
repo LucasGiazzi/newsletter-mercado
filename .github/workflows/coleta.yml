@@ -58,8 +58,8 @@ jobs:
           git diff --cached --quiet || git commit -m "Coleta $(TZ=America/Sao_Paulo date +%F)"
           git push
 
-      - name: Enviar ao Telegram
+      - name: Enviar por DM no Discord
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           USUARIOS_YAML: ${{ secrets.USUARIOS_YAML }}
         run: python notify.py

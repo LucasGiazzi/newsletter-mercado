@@ -1,0 +1,31 @@
+# Motores do "Contexto do mercado" (news.py).
+# Em cada edição entram primeiro os temas do usuário; depois, os motores com mais manchetes
+# válidas nas últimas 24h (uma manchete por motor, até completar o contexto).
+#   busca: consulta no Google News (aceita OR e aspas).
+#   palavras: o título precisa ter uma palavra que COMECE com um destes termos
+#             (sem diferenciar maiúsculas e acentos: "inflaç" casa com "inflação" e "inflacionário").
+motores:
+  Bolsa:
+    busca: Ibovespa
+    palavras: [Ibovespa]
+  Juros:
+    busca: juros OR Selic OR Copom
+    palavras: [juro, Selic, Copom]
+  Câmbio:
+    busca: dólar OR câmbio
+    palavras: [dólar, câmbio, cambia]
+  Inflação:
+    busca: inflação OR IPCA
+    palavras: [inflaç, inflac, IPCA]
+  Fiscal:
+    busca: fiscal OR "arcabouço fiscal" OR "dívida pública"
+    palavras: [fiscal, arcabouço, dívida, gasto]
+  Política:
+    busca: (eleição OR Congresso OR governo) mercado
+    palavras: [eleiç, eleit, Congresso, governo, Planalto]
+  Exterior:
+    busca: Fed OR "Wall Street" OR China mercado
+    palavras: [Fed, Wall Street, China, chinês, EUA, Dow Jones, Nasdaq]
+  Commodities:
+    busca: petróleo OR minério OR commodities
+    palavras: [petróleo, minério, commodit]

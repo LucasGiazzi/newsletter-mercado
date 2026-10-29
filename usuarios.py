@@ -24,16 +24,17 @@ def ler_configuracao():
 
 
 def validar(item):
-    """Usuário normalizado, ou None se faltar chat_id ou lista de tickers."""
-    if not isinstance(item, dict) or not item.get("chat_id") or not isinstance(item.get("tickers"), list):
+    """Usuário normalizado, ou None se faltar discord_id (só dígitos) ou lista de tickers."""
+    if not isinstance(item, dict) or not isinstance(item.get("tickers"), list):
         return None
+    discord_id = str(item.get("discord_id", "")).strip()
     tickers = [str(t).strip().upper() for t in item["tickers"] if str(t).strip()]
     temas = item.get("temas") if isinstance(item.get("temas"), list) else []
-    if not tickers:
+    if not discord_id.isdigit() or not tickers:
         return None
     return {
         "nome": str(item.get("nome", "")),
-        "chat_id": str(item["chat_id"]),
+        "discord_id": discord_id,
         "tickers": list(dict.fromkeys(tickers)),
         "temas": [str(t).strip() for t in temas if str(t).strip()],
     }
@@ -50,7 +51,7 @@ def carregar_usuarios():
     itens = itens if isinstance(itens, list) else []
     usuarios = [u for u in map(validar, itens) if u]
     if len(usuarios) < len(itens):
-        print(f"Aviso: {len(itens) - len(usuarios)} usuário(s) sem chat_id ou tickers foram ignorados.", file=sys.stderr)
+        print(f"Aviso: {len(itens) - len(usuarios)} usuário(s) sem discord_id ou tickers foram ignorados.", file=sys.stderr)
     if not usuarios:
         raise SystemExit("Nenhum usuário válido na configuração.")
     return usuarios

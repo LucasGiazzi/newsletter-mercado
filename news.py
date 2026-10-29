@@ -1,7 +1,8 @@
 """Busca manchetes relacionadas no Google News (RSS em pt-BR, últimas 24h).
 
 Para as 2 maiores altas e as 2 maiores baixas do dia entre os ativos recebidos e para o
-"Contexto do mercado" (temas do usuário, ou "Ibovespa"). São notícias relacionadas,
+"Contexto do mercado" (temas do usuário primeiro, depois os motores de temas.yml mais em
+pauta no dia). São notícias relacionadas,
 não a causa do movimento. Cada descarte fica registrado com o motivo.
 Logs só com contagens, nunca consultas ou tickers (privacidade).
 Projeto informativo: não é recomendação de compra, venda ou manutenção de ativos.
@@ -20,12 +21,14 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import requests
+import yaml
 
 from card import carregar_ultimo_json
 
 RAIZ = Path(__file__).resolve().parent
 PASTA_SAIDA = RAIZ / "out"
 ARQUIVO_FONTES = RAIZ / "fontes.txt"
+ARQUIVO_TEMAS = RAIZ / "temas.yml"
 
 RSS_URL = "https://news.google.com/rss/search"
 PARAMS_IDIOMA = {"hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"}
@@ -36,9 +39,9 @@ JANELA = timedelta(hours=24)
 
 ATIVOS_POR_LADO = 2
 MANCHETES_POR_ATIVO = 2
-MANCHETES_CONTEXTO = 3
-BUSCA_CONTEXTO = "Ibovespa"
-# "eleição" sozinha traz política em geral; com "mercado", vêm os efeitos no mercado
+MANCHETES_CONTEXTO = 4  # uma por tema ou motor
+BUSCA_CONTEXTO = "Ibovespa"  # só se não houver temas.yml nem temas do usuário
+# Tema livre do usuário: "eleição" sozinha traz política em geral; com "mercado", vêm os efeitos no mercado
 SUFIXO_BUSCA_TEMA = "mercado"
 
 # Manchetes parecidas (mesmo fato): texto quase igual ou muitas palavras-chave em comum
@@ -105,6 +108,12 @@ def padrao_do_tema(tema):
     return re.compile(rf"(?<!\w){re.escape(radical)}", re.IGNORECASE)
 
 
+def padrao_das_palavras(palavras):
+    """Título com alguma palavra que comece com um dos termos (sem acento, qualquer caixa)."""
+    termos = "|".join(re.escape(sem_acento(p)) for p in palavras)
+    return re.compile(rf"(?<!\w)(?:{termos})", re.IGNORECASE)
+
+
 def palavras_chave(titulo):
     """Radicais de 4 letras ('Vamos' e 'VAMO3' viram 'vamo') e números sem separador ('5,34' -> '534')."""
     chaves = set()
@@ -139,6 +148,21 @@ def ler_fontes():
 
 def fonte_aceita(fonte, fontes):
     return fontes is None or any(normalizar(fonte).startswith(f) for f in fontes)
+
+
+# ---------- temas ----------
+
+def ler_motores():
+    """Motores de temas.yml: chave normalizada -> {nome, busca, padrao}. Vazio se não houver arquivo."""
+    if not ARQUIVO_TEMAS.exists():
+        return {}
+    dados = yaml.safe_load(ARQUIVO_TEMAS.read_text(encoding="utf-8")) or {}
+    motores = {}
+    for nome, config in (dados.get("motores") or {}).items():
+        if isinstance(config, dict) and config.get("busca") and config.get("palavras"):
+            palavras = [str(p) for p in config["palavras"]]
+            motores[normalizar(str(nome))] = {"nome": str(nome), "busca": str(config["busca"]), "padrao": padrao_das_palavras(palavras)}
+    return motores
 
 
 # ---------- busca ----------
@@ -221,16 +245,25 @@ def escolher(manchetes, quantidade, busca, filtros, vistos, descartes, padrao=No
     return escolhidas
 
 
-def consultas_de_contexto(temas):
-    """(consulta, quantidade, padrão) por tema, dividindo as 3 manchetes; sem temas, 'Ibovespa'."""
-    if not temas:
-        return [(BUSCA_CONTEXTO, MANCHETES_CONTEXTO, None)]
-    temas = temas[:MANCHETES_CONTEXTO]
-    base, resto = divmod(MANCHETES_CONTEXTO, len(temas))
-    return [
-        (f"{tema} {SUFIXO_BUSCA_TEMA}", base + (1 if i < resto else 0), padrao_do_tema(tema))
-        for i, tema in enumerate(temas)
-    ]
+def volume_do_dia(motor, filtros):
+    """Manchetes válidas do motor nas últimas 24h: medida simples de quanto o assunto está em pauta."""
+    vazio = {"titulos": [], "urls": set()}
+    return sum(1 for m in buscar_rss(motor["busca"]) or [] if motivo_descarte(m, filtros, vazio, motor["padrao"]) is None)
+
+
+def fila_de_contexto(temas, motores, filtros):
+    """Ordem do contexto: temas do usuário primeiro, depois os motores mais em pauta no dia."""
+    fila, usados = [], set()
+    for tema in temas:
+        motor = motores.get(normalizar(tema))
+        if motor:
+            usados.add(normalizar(tema))
+            fila.append(motor)
+        else:
+            fila.append({"nome": tema, "busca": f"{tema} {SUFIXO_BUSCA_TEMA}", "padrao": padrao_do_tema(tema)})
+    restantes = [m for chave, m in motores.items() if chave not in usados]
+    fila += sorted(restantes, key=lambda m: -volume_do_dia(m, filtros))
+    return fila or [{"nome": None, "busca": BUSCA_CONTEXTO, "padrao": None}]
 
 
 # ---------- seleção dos ativos ----------
@@ -271,8 +304,11 @@ def buscar_noticias(dia, temas=()):
         escolhidas = escolher(manchetes, MANCHETES_POR_ATIVO, busca, filtros, vistos, descartes, padrao)
         movimentos.append(movimento(ativo, escolhidas, manchetes is not None))
     contexto = []
-    for busca, quantidade, padrao in consultas_de_contexto(temas):
-        contexto += escolher(buscar_rss(busca), quantidade, busca, filtros, vistos, descartes, padrao)
+    for item in fila_de_contexto(temas, ler_motores(), filtros):
+        if len(contexto) == MANCHETES_CONTEXTO:
+            break
+        escolhidas = escolher(buscar_rss(item["busca"]), 1, item["busca"], filtros, vistos, descartes, item["padrao"])
+        contexto += [{**m, "tema": item["nome"]} for m in escolhidas]
     return {"data": dia["data"], "movimentos": movimentos, "contexto": contexto, "descartes": descartes}
 
 

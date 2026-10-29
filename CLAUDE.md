@@ -2,14 +2,14 @@
 
 ## O que é
 
-Todo dia útil, coleta cotações da B3 e indicadores do Banco Central em um JSON e envia pelo Telegram, **para cada usuário**, um card com os números dos ativos dele e um texto com destaques e notícias relacionadas.
+Todo dia útil, coleta cotações da B3 e indicadores do Banco Central em um JSON e envia por **DM no Discord**, **para cada usuário**, um card com os números dos ativos dele e um texto com destaques e notícias relacionadas. (Até 28/10/2026 o envio era pelo Telegram; ninguém do grupo usa Telegram.)
 
 São dois repositórios com o mesmo código:
 
 - **`newsletter-mercado` (público, template):** só código e exemplos. Nunca recebe dados de usuários. `usuarios.yml` e `data/*.json` ficam no `.gitignore`. O workflow existe, mas não roda em repositório público (trava de privacidade).
 - **`newsletter-project` (privado, produção):** clone do público, com o público como remote `template` para puxar atualizações (`git fetch template && git merge template/main`). Os usuários ficam no Secret `USUARIOS_YAML`. O Actions roda aqui e commita os JSONs com `git add -f`.
 
-Nada pessoal pode ficar fixo no código: usuários, chat_ids e tokens só em `usuarios.yml` local, `.env` ou Secrets.
+Nada pessoal pode ficar fixo no código: usuários, discord_ids e tokens só em `usuarios.yml` local, `.env` ou Secrets.
 
 ## Arquitetura
 
@@ -20,8 +20,8 @@ Nada pessoal pode ficar fixo no código: usuários, chat_ids e tokens só em `us
         └-> data/AAAA-MM-DD.json  (commitado só no repo privado)
    notify.py -> para cada usuário:
                 recorte do JSON (só os tickers dele)
-                + card.py (PNG) + news.py (manchetes; contexto pelos temas dele)
-                -> Telegram no chat_id dele
+                + card.py (PNG) + news.py (manchetes; contexto: temas dele + motores de temas.yml)
+                -> DM no Discord (bot) para o discord_id dele
 
 [Agente de narrativa, ~19h, fora deste repo]
    lê o JSON do dia + pesquisa notícias -> escreve a edição
@@ -37,27 +37,29 @@ data/                          um JSON por dia útil (no público: só .gitkeep;
 usuarios.py                    lê usuários de USUARIOS_YAML ou usuarios.yml
 usuarios.example.yml           exemplo com dados fictícios (o real, usuarios.yml, fica fora do Git)
 collect.py                     coletor
-card.py                        gera out/card-AAAA-MM-DD[-N].png (Jinja2 + Playwright)
+card.py                        gera out/card-AAAA-MM-DD[-<código>].png (Jinja2 + Playwright)
 templates/card.html            template do card
-news.py                        manchetes relacionadas -> out/noticias-AAAA-MM-DD[-N].json
-notify.py                      uma edição por usuário (--previa só gera e mostra)
-out/                           cards e notícias gerados (fora do Git); N = posição do usuário
+news.py                        manchetes relacionadas -> out/noticias-AAAA-MM-DD[-<código>].json
+notify.py                      uma edição por usuário, por DM no Discord (--previa só gera e mostra)
+ativar_discord.py              ativação única do bot (conecta ao Gateway uma vez; usa websocket-client)
+out/                           cards e notícias gerados (fora do Git); <código> = hash curto do discord_id
 fontes.txt                     fontes de notícia aceitas; uma por linha, # é comentário
+temas.yml                      motores do "Contexto do mercado" (busca + palavras exigidas no título)
 requirements.txt               requests, python-dotenv, jinja2, playwright, pyyaml
-.env                           BRAPI_TOKEN, TELEGRAM_BOT_TOKEN (local, fora do Git)
+.env                           BRAPI_TOKEN, DISCORD_BOT_TOKEN (local, fora do Git)
 ```
 
 ## Regras invioláveis
 
-- **Nunca leia, imprima, logue ou commite o `.env`, `usuarios.yml` ou o valor de tokens e chat_ids.** Os scripts carregam o `.env` via python-dotenv; no Actions tudo vem de Secrets.
-- **Logs só com contagens.** Nunca chat_id, nome, tickers ou temas de usuário, nem consultas de notícia. Exemplos: `Usuários: 3 | enviados: 2 | falhas: 1`, `ativos: 9/9`. Erros detalhados por ticker vão só para o JSON (`erros`), que só existe no repo privado. A única exceção é `notify.py --previa`, que mostra o conteúdo para o dono conferir localmente e nunca roda no Actions.
-- **Um usuário não vê dados de outro.** Card, destaques e erros de cada edição só citam os tickers dele (ver `filtrar_para_usuario`).
+- **Nunca leia, imprima, logue ou commite o `.env`, `usuarios.yml` ou o valor de tokens e discord_ids.** Os scripts carregam o `.env` via python-dotenv; no Actions tudo vem de Secrets.
+- **Logs só com contagens.** Nunca discord_id, nome, tickers ou temas de usuário, nem consultas de notícia. Exemplos: `Usuários: 3 | enviados: 2 | falhas: 1`, `ativos: 9/9`. Erros detalhados por ticker vão só para o JSON (`erros`), que só existe no repo privado. A única exceção é `notify.py --previa`, que mostra o conteúdo para o dono conferir localmente e nunca roda no Actions.
+- **Um usuário não vê dados de outro.** Card, destaques e erros de cada edição só citam os tickers dele (ver `filtrar_para_usuario`). Arquivos em `out/` são nomeados por `codigo_do_usuario` (hash curto do discord_id), nunca pela posição na lista: se a ordem mudar entre a prévia e o envio, a posição faria um usuário receber as notícias de outro. Ao reaproveitar notícias, o `notify.py` também confere se os ativos do arquivo são do usuário.
 - **O workflow só processa dados em repositório privado.** Ele consulta a visibilidade pela API, porque em execuções agendadas (`schedule`) o `github.event` não traz `repository`. Não troque por `if: github.event.repository.private`, que deixaria a coleta agendada sem rodar.
 - Falha em um ticker não derruba a coleta: registra em `erros` e segue. Falha em um usuário não impede os outros.
 - O JSON é sempre gravado, mesmo com erros, para a edição poder avisar o que falhou.
 - Projeto informativo: nada no código, README ou saídas sugere comprar, vender ou manter ativos.
-- **Privacidade e custo zero são prioridades.** Nada pode exigir plano pago (ex.: GitHub Pages em repo privado precisa de Pro). Visualização é pelo Telegram, que é privado e grátis.
-- O token do Telegram vai na URL da API: nunca imprimir URL nem exceção crua do `requests`.
+- **Privacidade e custo zero são prioridades.** Nada pode exigir plano pago (ex.: GitHub Pages em repo privado precisa de Pro). Visualização é por DM no Discord, que é privada e grátis. Nenhum outro membro ou administrador do servidor vê as DMs (ao contrário de canais privados, que o dono e os administradores do servidor sempre veem).
+- O token do bot vai no header `Authorization: Bot ...`: nunca imprimir headers, URLs com ids nem exceção crua do `requests`.
 
 ## Usuários (`usuarios.py`)
 
@@ -66,15 +68,18 @@ O YAML vem da variável `USUARIOS_YAML`, quando definida (Secret no Actions); se
 ```yaml
 usuarios:
   - nome: Ana
-    chat_id: 111111111
+    discord_id: "111111111111111111"   # entre aspas
     tickers: [PETR4, VALE3]
-    temas: [eleição, juros]   # opcional
+    temas: [Juros, eleição]            # opcional
 ```
 
-- Entradas sem `chat_id` ou sem lista de `tickers` são ignoradas; o log mostra só quantas.
+- Entradas sem `discord_id` (só dígitos) ou sem lista de `tickers` são ignoradas; o log mostra só quantas.
 - Erro de YAML mostra só o tipo do erro, porque a mensagem completa pode citar trechos da configuração.
 - `nome` serve só para organizar o arquivo: não aparece em log nem na mensagem.
-- Cada pessoa precisa mandar uma mensagem ao bot antes; o chat_id sai de `getUpdates`. O dono do bot e do repo privado vê a configuração de todos.
+- `discord_id`: no Discord, Configurações > Avançado > Modo desenvolvedor; botão direito na pessoa > "Copiar ID do usuário". O dono copia; a pessoa não precisa fazer nada.
+- Para receber a DM, a pessoa precisa estar num servidor em comum com o bot e aceitar DMs de membros do servidor (padrão do Discord). Se não aceitar, a falha conta no log (código 50007) e os outros recebem normalmente.
+- `temas`: o nome de um motor de `temas.yml` (ex.: `Juros`) ou um assunto livre (ex.: `eleição`). Entram primeiro no contexto.
+- O cadastro é manual. Comandos no bot exigiriam um servidor ligado o tempo todo, o que fere o custo zero. O dono do bot e do repo privado vê a configuração de todos.
 
 ## brapi (verificado em 28/10/2026, docs: https://brapi.dev/docs)
 
@@ -98,37 +103,49 @@ Base: `https://brapi.dev/api/v2/stocks`. Autenticação: header `Authorization: 
 
 Instável: respostas de ~15 s e 502 intermitente; o coletor tenta 3 vezes por série. A série 432 pode vir com data futura (vigência até a próxima reunião do Copom).
 
-## Telegram (formato híbrido, uma edição por usuário)
+## Discord (DM do bot, uma edição por usuário)
+
+API REST `https://discord.com/api/v10`, header `Authorization: Bot <DISCORD_BOT_TOKEN>` e `User-Agent: DiscordBot (url, versão)`. Não usa biblioteca de Discord: só `requests`.
+
+- **Abrir a DM:** `POST /users/@me/channels` com `{"recipient_id": discord_id}`. Devolve o canal de DM; se ele já existir, devolve o mesmo.
+- **Mensagem:** `POST /channels/{canal}/messages` com `flags: 4` (SUPPRESS_EMBEDS, sem prévia de links) e `allowed_mentions: {"parse": []}`. O card vai como multipart (`payload_json` + `files[0]`), com o arquivo em bytes, para poder reenviar se vier 429.
+- **429:** espera o `retry_after` do corpo e tenta até 3 vezes. Pausa de 0,5 s entre mensagens.
+- **Ativação única:** o Discord exige que um bot novo se conecte ao Gateway uma vez antes de enviar mensagens. Para isso existe `python ativar_discord.py`, que roda uma vez, na máquina local, e precisa de `pip install websocket-client` (fora do `requirements.txt`).
+- **Criação do bot:** Developer Portal → New Application.
+  - Installation: Install Link = None.
+  - Bot: desmarcar Public Bot e gerar o token; nenhum Privileged Intent.
+  - OAuth2 → URL Generator: só o scope `bot`, sem permissões; com a URL, convidar o bot para o servidor do grupo.
 
 Para cada usuário, `notify.py` recorta o JSON (`filtrar_para_usuario`):
 - só os ativos dele;
 - só os erros dos tickers dele, mais os de macro e índices;
 - `status` recalculado: `sem_pregao` vale para todos; `parcial` se houver erro ou ativo sem dado de hoje entre os dele.
 
-Depois envia ao `chat_id` dele, nesta ordem:
+Depois envia por DM, nesta ordem:
 
-1. **`sendPhoto` com o card** (`card.py`): só números do recorte. Ibovespa, dólar PTAX, Selic, IPCA e tabela dos ativos (fechamento, dia, semana, mês) ordenada pela variação do dia. Aviso no topo se `status` for `parcial` ou `sem_pregao`. Rodapé: "Dados: brapi e Banco Central | coletado em X | informativo, não é recomendação".
+1. **Mensagem com o card anexado** (`card.py`), arquivo `mercado-AAAA-MM-DD.png`: só números do recorte. Ibovespa, dólar PTAX, Selic, IPCA e tabela dos ativos (fechamento, dia, semana, mês) ordenada pela variação do dia. Aviso no topo se `status` for `parcial` ou `sem_pregao`. Rodapé: "Dados: brapi e Banco Central | coletado em X | informativo, não é recomendação".
    - Visual de terminal financeiro: fundo escuro, números em fonte mono tabular alinhados à direita, verde (`#2cb5a0`) e vermelho (`#f0605d`) **só nas variações**, sempre com sinal +/−. O par foi validado para daltonismo e contraste. Sem gradientes.
    - Playwright/Chromium, viewport de 1080 px, `device_scale_factor=2`, screenshot só do `#card`. Sem recursos externos no template.
-2. **`sendMessage` com o texto** (`parse_mode=HTML`, sem preview de link): avisos de status, linha do Ibovespa e as 2 maiores altas e 2 maiores baixas **entre os ativos do usuário**:
+2. **Mensagens de texto** em Markdown do Discord: avisos de status, linha do Ibovespa e as 2 maiores altas e 2 maiores baixas **entre os ativos do usuário**:
    ```
-   ▲ WEGE3 +2,25%
-     • <a href="link">Manchete</a> (fonte)
+   ▲ **WEGE3** +2,25%
+   - [Manchete](<link>) (fonte)
    ```
    - Sem manchete: "sem notícia específica"; busca com falha: "notícias indisponíveis".
-   - Depois vem "Contexto do mercado", com os temas do usuário, e a nota de que as manchetes são **relacionadas, não a causa**. O texto nunca afirma causalidade. Todo texto passa por `html.escape`; só links `https`.
-   - Limite: 4096 caracteres **visíveis** (o Telegram conta depois de interpretar o HTML). Se passar, cortam-se manchetes do contexto e depois as do último ativo.
+   - Depois vem "Contexto do mercado", com uma manchete por tema e o rótulo do tema (`- **Juros** · [Manchete](<link>) (fonte)`). No fim, uma nota em texto pequeno (`-# `) diz que as manchetes são **relacionadas, não a causa**. O texto nunca afirma causalidade.
+   - Título, fonte e tema passam por `escapar` (Markdown do Discord). Só links `https`, com `)` e espaço codificados na URL.
+   - Limite: **2000 caracteres por mensagem, contando as URLs** (os links do Google News têm até ~600 caracteres). `dividir_em_mensagens` junta blocos (cabeçalho, cada ativo, contexto, nota) até o limite. Bloco maior que o limite começa numa mensagem nova e é quebrado por linha, para o título da seção não ficar sozinho. Na prática, são 3 ou 4 mensagens por edição.
 
 Falhas:
 - Notícias ou RSS com problema: a edição segue sem manchetes.
 - Card com problema: o texto é enviado mesmo assim.
-- Erro do Telegram com um usuário: os outros continuam.
+- Erro do Discord com um usuário (DM bloqueada, id errado): os outros continuam.
 
-No fim, o log mostra só `Usuários | enviados | falhas | sem card` e os motivos das falhas, por exemplo `HTTP 400 em sendPhoto: Bad Request: chat not found`. O script sai com código 1 se houver falha ou card ausente.
+No fim, o log mostra só `Usuários | enviados | falhas | sem card` e os motivos das falhas, por exemplo `HTTP 403 ao enviar card: 50007 Cannot send messages to this user`. O script sai com código 1 se houver falha ou card ausente.
 
 Prévia e envio:
-- `python notify.py --previa`: gera cards e notícias de todos e mostra os textos, sem enviar.
-- `python notify.py --reusar-noticias`: envia reaproveitando `out/noticias-AAAA-MM-DD-N.json` da prévia, sem buscar de novo.
+- `python notify.py --previa`: gera cards e notícias de todos e mostra as mensagens, sem enviar.
+- `python notify.py --reusar-noticias`: envia reaproveitando `out/noticias-AAAA-MM-DD-<código>.json` da prévia, sem buscar de novo.
 
 No Actions, instalar o navegador com `python -m playwright install --with-deps chromium`.
 
@@ -139,9 +156,14 @@ No Actions, instalar o navegador com `python -m playwright install --with-deps c
   - Itens: `title` ("Manchete - Fonte", o sufixo é removido), `link` (redirecionamento do Google, com até ~600 caracteres), `pubDate`, `source`.
 - **Cache por execução** (`_cache_rss`): usuários com o mesmo ativo ou tema não repetem a busca.
 - **Busca por ativo:** nome limpo + ticker. O nome limpo sai do `nome` sem SA/S.A./Pfd/ON/PN/Holding e sem o que vem depois de " - ". Exemplo: "Itau Unibanco Holding SA Pfd" vira "Itau Unibanco ITUB4".
-- **Busca de contexto:** com temas, a consulta é `<tema> mercado` ("eleição" sozinha traz política em geral) e as 3 manchetes são divididas entre os temas, até 3 temas; o título precisa citar o radical do tema ("eleição" casa com "eleições"). Sem temas, a busca é "Ibovespa", sem exigir citação.
+- **Contexto do mercado** (`fila_de_contexto`): **4 manchetes, uma por tema**, cada uma com o rótulo do tema. A fila tem esta ordem:
+  1. **Temas do usuário.** Se o tema tiver o nome de um motor de `temas.yml` (ex.: `Juros`), usa o motor. Se for assunto livre, a busca é `<tema> mercado` ("eleição" sozinha traz política em geral) e o título precisa citar o radical do tema ("eleição" casa com "eleições").
+  2. **Motores de `temas.yml`** (Bolsa, Juros, Câmbio, Inflação, Fiscal, Política, Exterior, Commodities), ordenados por **volume do dia**: quantas manchetes válidas o motor tem nas últimas 24h (`volume_do_dia`). É uma medida simples de quanto o assunto está em pauta, não de impacto no preço.
+  - Cada motor tem `busca`, uma consulta ao Google News que aceita OR e aspas, e `palavras`: o título precisa ter uma palavra que **comece** com um dos termos, sem diferenciar maiúsculas e acentos. Evite termos curtos que casem com palavras comuns (ex.: "DI" casaria com "dia").
+  - Sem `temas.yml` e sem temas do usuário, a busca é "Ibovespa", sem exigir citação.
+  - Como o agrupamento de manchetes parecidas vale para a mensagem toda, o mesmo fato não aparece em dois temas.
 - **Seleção dos ativos:** só ativos com `dado_de_hoje`. Altas são as variações > 0 e baixas as < 0; num dia sem nenhuma alta, não há ▲.
-- **Escolha das manchetes:** até 2 por ativo e 3 de contexto, na ordem do Google. Cada manchete passa por `motivo_descarte`, e **o primeiro motivo que se aplicar** é o registrado:
+- **Escolha das manchetes:** até 2 por ativo e 1 por tema do contexto, na ordem do Google. Cada manchete passa por `motivo_descarte`, e **o primeiro motivo que se aplicar** é o registrado:
   1. `sem data` / `mais de 24h`: o `pubDate` é conferido de novo; o `when:1d` sozinho não basta.
   2. `fonte fora da lista`: a lista fica em **`fontes.txt`**. A fonte é aceita se o nome começar por um item da lista, sem diferenciar maiúsculas e acentos ("Valor" aceita "Valor Investe"). Sem o arquivo, não há filtro de fonte.
   3. `não cita o ativo ou tema no título`:
@@ -155,7 +177,7 @@ No Actions, instalar o navegador com `python -m playwright install --with-deps c
      - palavras-chave em comum ≥ 50% do título menor, com pelo menos 3 palavras.
      As palavras-chave são radicais de 4 letras ("Vamos" e "VAMO3" viram "vamo") e números sem separador ("5,34" vira "534"), sem palavras vazias. Fica a primeira manchete de cada fato.
 - Sem manchete válida para o ativo: "sem notícia específica". Isso é esperado com os filtros rígidos.
-- **Saída:** `out/noticias-AAAA-MM-DD-N.json` (`{"data", "movimentos": [{"ticker", "var_dia_pct", "busca_ok", "noticias": [...]}], "contexto": [...], "descartes": [{"busca", "motivo", "titulo", "fonte"}]}`). `python news.py` é um diagnóstico com todos os ativos do JSON e sem temas: imprime só contagens por motivo e grava os detalhes em `out/noticias-AAAA-MM-DD.json`.
+- **Saída:** `out/noticias-AAAA-MM-DD-<código>.json` (`{"data", "movimentos": [{"ticker", "var_dia_pct", "busca_ok", "noticias": [...]}], "contexto": [{..., "tema"}], "descartes": [{"busca", "motivo", "titulo", "fonte"}]}`). `python news.py` é um diagnóstico com todos os ativos do JSON e sem temas: imprime só contagens por motivo e grava os detalhes em `out/noticias-AAAA-MM-DD.json`.
 
 ## Contrato do JSON de saída
 
@@ -203,7 +225,7 @@ Roda em dias úteis às 18h30 BRT (`30 21 * * 1-5`) e também por `workflow_disp
    - `git add -f data/*.json`, commit e push;
    - `notify.py`.
 
-Secrets do repo privado: `BRAPI_TOKEN`, `TELEGRAM_BOT_TOKEN`, `USUARIOS_YAML` (o conteúdo inteiro do YAML).
+Secrets do repo privado: `BRAPI_TOKEN`, `DISCORD_BOT_TOKEN`, `USUARIOS_YAML` (o conteúdo inteiro do YAML).
 
 ## Convenções
 

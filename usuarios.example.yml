@@ -1,16 +1,18 @@
 # Exemplo com dados fictícios. Copie para usuarios.yml (fora do Git) para rodar local,
 # ou cole o conteúdo no Secret USUARIOS_YAML do repositório privado.
 #
-# chat_id: cada pessoa manda uma mensagem ao bot e o dono do bot consulta
-#   https://api.telegram.org/bot<TOKEN>/getUpdates  ->  "chat":{"id": ...}
+# discord_id: no Discord, ative Configurações > Avançado > Modo desenvolvedor,
+#   clique com o botão direito na pessoa > "Copiar ID do usuário". Use aspas.
+#   A pessoa precisa estar num servidor em comum com o bot e aceitar DMs de membros.
 # tickers: ativos da B3 que entram no card e nos destaques dessa pessoa.
-# temas: assuntos do "Contexto do mercado" (opcional; sem temas, usa "Ibovespa").
+# temas: assuntos que entram primeiro no "Contexto do mercado" (opcional).
+#   Pode ser o nome de um motor de temas.yml (ex.: Juros) ou um assunto livre (ex.: eleição).
 usuarios:
   - nome: Ana
-    chat_id: 111111111
+    discord_id: "111111111111111111"
     tickers: [PETR4, VALE3, ITUB4]
-    temas: [juros, petróleo]
+    temas: [Juros, petróleo]
   - nome: Bruno
-    chat_id: 222222222
+    discord_id: "222222222222222222"
     tickers: [WEGE3, MGLU3, B3SA3]
-    temas: [eleição]
+    temas: []
